@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { Bot, Send, Sparkles, HelpCircle, CheckCircle2, MessageSquare, CornerDownRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Bot, Send, Sparkles, HelpCircle, CheckCircle2, MessageSquare, CornerDownRight, Volume2, VolumeX } from 'lucide-react';
 import { Claim } from '../../types';
 import { askCopilot } from '../../services/api';
+import { speakAloud, stopSpeaking } from '../../utils/speech';
 
 interface Props {
   claim: Claim;
@@ -14,6 +15,7 @@ interface Message {
 }
 
 export const AICopilotChat: React.FC<Props> = ({ claim }) => {
+  const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
@@ -36,6 +38,28 @@ export const AICopilotChat: React.FC<Props> = ({ claim }) => {
     'What are the possible inconsistencies or fraud risks?',
     'How was the indicative claim payout calculated?'
   ];
+
+  // Cleanup speech on unmount
+  useEffect(() => {
+    return () => {
+      stopSpeaking();
+    };
+  }, []);
+
+  const toggleSpeak = (text: string, index: number) => {
+    if (speakingIndex === index) {
+      stopSpeaking();
+      setSpeakingIndex(null);
+    } else {
+      speakAloud(text, {
+        lang: 'en-IN',
+        rate: 1.0,
+        onStart: () => setSpeakingIndex(index),
+        onEnd: () => setSpeakingIndex(null),
+        onError: () => setSpeakingIndex(null)
+      });
+    }
+  };
 
   const handleSend = async (queryText?: string) => {
     const text = queryText || input;
@@ -133,6 +157,40 @@ export const AICopilotChat: React.FC<Props> = ({ claim }) => {
                         </li>
                       ))}
                     </ul>
+                  </div>
+                )}
+
+                {/* Speak Answer Button for Assistant */}
+                {!isUser && (
+                  <div className="mt-2.5 pt-2 border-t border-slate-850 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => toggleSpeak(m.content, idx)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                        speakingIndex === idx
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
+                          : 'bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                      }`}
+                      title={speakingIndex === idx ? 'Stop reading' : 'Read answer aloud'}
+                    >
+                      {speakingIndex === idx ? (
+                        <>
+                          <VolumeX className="w-3.5 h-3.5 text-red-400" />
+                          <span>Stop Audio</span>
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Speak Answer</span>
+                        </>
+                      )}
+                    </button>
+                    {speakingIndex === idx && (
+                      <span className="text-[10px] text-cyan-400 flex items-center gap-1 font-mono">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                        Speaking...
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

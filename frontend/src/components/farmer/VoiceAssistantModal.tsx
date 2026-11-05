@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Volume2, VolumeX, ArrowRight, ArrowLeft, RotateCcw, SkipForward, CheckCircle2, MapPin, Upload, Camera, Sparkles, X, ShieldAlert, Globe, ExternalLink, RefreshCw, Navigation, Edit3 } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, ArrowRight, ArrowLeft, RotateCcw, SkipForward, CheckCircle2, MapPin, Upload, Camera, Sparkles, X, ShieldAlert, Globe, ExternalLink, RefreshCw, Navigation, Edit3, AlertCircle } from 'lucide-react';
 import { encodeDigipin } from '../../utils/digipin';
+import { speakAloud, stopSpeaking, isSpeechRecognitionSupported, isSpeechSynthesisSupported } from '../../utils/speech';
 
 interface Props {
   isOpen: boolean;
@@ -20,6 +21,8 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
   const [spokenTranscript, setSpokenTranscript] = useState<string>('');
+  const [lastParsedSummary, setLastParsedSummary] = useState<string>('');
+  const [recErrorMsg, setRecErrorMsg] = useState<string | null>(null);
 
   // Location Selector Options State
   const [locationMode, setLocationMode] = useState<'autofetch' | 'manual'>('autofetch');
@@ -130,26 +133,61 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
   const currentQ = questions[currentStep - 1];
 
+  // Sample voice answers per step for immediate testing & fallback
+  const sampleAnswersForStep: Record<number, string[]> = {
+    1: [
+      'Ravi Kumar, 9876543210, Devanahalli',
+      'Suresh Gowda, 9945012345, Ramanagara'
+    ],
+    2: [
+      'Survey 125/2, 2.5 acres',
+      'Survey 88/1, 3.2 acres'
+    ],
+    3: [
+      'Ragi crop, vegetative stage',
+      'Paddy crop, flowering stage',
+      'Cotton crop, vegetative stage'
+    ],
+    4: [
+      'Heavy flood, 70 percent damage, two days waterlogging',
+      'Continuous rainfall, 60 percent crop loss'
+    ],
+    5: [
+      '18000 rupees out-of-pocket loss',
+      '25000 rupees total loss'
+    ]
+  };
+
   // Text to Speech
   const speakQuestion = (text: string) => {
-    if (!voiceEnabled || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.95;
-    utterance.pitch = 1.0;
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+    if (!voiceEnabled) return;
+    speakAloud(text, {
+      lang: language === 'kn' ? 'kn-IN' : 'en-IN',
+      rate: 0.95,
+      pitch: 1.0,
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
+      onError: () => setIsSpeaking(false)
+    });
+  };
+
+  const toggleSpeakQuestion = () => {
+    if (isSpeaking) {
+      stopSpeaking();
+      setIsSpeaking(false);
+    } else {
+      const qText = language === 'kn' ? currentQ.questionKn : currentQ.questionEn;
+      speakQuestion(qText);
+    }
   };
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && voiceEnabled) {
       const qText = language === 'kn' ? currentQ.questionKn : currentQ.questionEn;
       speakQuestion(qText);
     }
     return () => {
-      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      stopSpeaking();
     };
   }, [isOpen, currentStep]);
 
@@ -211,46 +249,219 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     setLocationStatus(`✓ Coordinates Updated: ${lat}° N, ${lon}° E (DIGIPIN: ${pin})`);
   };
 
-  // Speech Recognition
-  const toggleSpeechRecognition = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('Speech recognition is not supported in this browser. Please use text input fallback.');
+  // Contextual Spoken Answer Parser across all 5 steps
+  const parseSpokenTextForStep = (text: string, step: number, isDirectSample = false) => {
+    const clean = text.trim();
+    if (!clean) return;
+
+    setSpokenTranscript(clean);
+    setRecErrorMsg(null);
+    const parsedItems: string[] = [];
+
+    if (step === 1) {
+      // Step 1: Farmer Name, Mobile, Village
+      const digitsOnly = clean.replace(/[^0-9]/g, '');
+      if (digitsOnly.length >= 10) {
+        const phone = digitsOnly.slice(-10);
+        setFormData(prev => ({ ...prev, mobile: phone }));
+        parsedItems.push(`Phone: ${phone}`);
+      }
+
+      const lower = clean.toLowerCase();
+      if (lower.includes('devanahalli')) {
+        setFormData(prev => ({ ...prev, village: 'Devanahalli', district: 'Bengaluru Rural' }));
+        parsedItems.push('Village: Devanahalli');
+      } else if (lower.includes('ramanagara')) {
+        setFormData(prev => ({ ...prev, village: 'Ramanagara', district: 'Ramanagara' }));
+        parsedItems.push('Village: Ramanagara');
+      } else if (lower.includes('hosakote')) {
+        setFormData(prev => ({ ...prev, village: 'Hosakote', district: 'Bengaluru Rural' }));
+        parsedItems.push('Village: Hosakote');
+      } else if (lower.includes('chikodi') || lower.includes('belagavi')) {
+        setFormData(prev => ({ ...prev, village: 'Chikodi', district: 'Belagavi' }));
+        parsedItems.push('Village: Chikodi');
+      }
+
+      let extractedName = clean
+        .replace(/(?:my\s*name\s*is|i\s*am|this\s*is|namaste|farmer|mobile|number|phone|\d+)/gi, '')
+        .replace(/(?:village|district|state)\s+[a-zA-Z]+/gi, '')
+        .replace(/[,.-]/g, ' ')
+        .trim();
+      if (extractedName.length >= 3 && extractedName.length <= 40) {
+        setFormData(prev => ({ ...prev, farmerName: extractedName }));
+        parsedItems.push(`Name: ${extractedName}`);
+      }
+    } else if (step === 2) {
+      // Step 2: Land Survey Number & Area
+      const surveyMatch = clean.match(/(?:survey\s*(?:no\.?|number|#)?\s*)?([0-9]{1,4}\/[0-9a-zA-Z]{1,4})/i) ||
+                          clean.match(/\b([0-9]{1,4}\/[0-9a-zA-Z]{1,4})\b/);
+      if (surveyMatch) {
+        setFormData(prev => ({ ...prev, surveyNumber: surveyMatch[1] }));
+        parsedItems.push(`Survey #${surveyMatch[1]}`);
+      }
+
+      const areaMatch = clean.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:acres?|acre|ac)/i);
+      if (areaMatch) {
+        const acres = parseFloat(areaMatch[1]);
+        if (acres > 0 && acres <= 100) {
+          setFormData(prev => ({ ...prev, landAreaAcres: acres, insuredAreaAcres: acres }));
+          parsedItems.push(`Area: ${acres} Acres`);
+        }
+      }
+    } else if (step === 3) {
+      // Step 3: Crop & Stage
+      const crops = ['Ragi', 'Paddy', 'Cotton', 'Sugarcane', 'Wheat', 'Onion', 'Maize', 'Soybean'];
+      for (const c of crops) {
+        if (new RegExp(`\\b${c}\\b`, 'i').test(clean)) {
+          setFormData(prev => ({ ...prev, cropName: c }));
+          parsedItems.push(`Crop: ${c}`);
+          break;
+        }
+      }
+
+      const stages = [
+        { name: 'Newly sown', pattern: /newly sown|germination|sowing|sown/i },
+        { name: 'Vegetative stage', pattern: /vegetative|growth|growing|leaf/i },
+        { name: 'Flowering stage', pattern: /flowering|flower|bloom/i },
+        { name: 'Fruiting stage', pattern: /fruiting|fruit|grain/i },
+        { name: 'Near harvest', pattern: /harvest|ripening|mature/i },
+      ];
+      for (const s of stages) {
+        if (s.pattern.test(clean)) {
+          setFormData(prev => ({ ...prev, growthStage: s.name }));
+          parsedItems.push(`Stage: ${s.name}`);
+          break;
+        }
+      }
+    } else if (step === 4) {
+      // Step 4: Disaster & Severity %
+      const disasters = ['Flood', 'Heavy rainfall', 'Drought', 'Cyclone', 'Hailstorm', 'Landslide', 'Pest attack'];
+      for (const d of disasters) {
+        if (new RegExp(`\\b${d}\\b`, 'i').test(clean)) {
+          setFormData(prev => ({ ...prev, disasterType: d }));
+          parsedItems.push(`Disaster: ${d}`);
+          break;
+        }
+      }
+
+      const pctMatch = clean.match(/([0-9]{1,3})\s*(?:%|percent|percentage)/i);
+      if (pctMatch) {
+        const pct = parseInt(pctMatch[1]);
+        if (pct >= 5 && pct <= 100) {
+          setFormData(prev => ({ ...prev, damagePercentage: pct }));
+          parsedItems.push(`Damage: ${pct}%`);
+        }
+      }
+
+      setFormData(prev => ({ ...prev, description: clean }));
+      parsedItems.push('Statement recorded');
+    } else if (step === 5) {
+      // Step 5: Financial Loss in ₹
+      const numClean = clean.replace(/,/g, '');
+      const rupeeMatch = numClean.match(/(?:rs\.?|rupees?|inr|₹)?\s*([0-9]{3,7})/i);
+      let amount = 0;
+      if (rupeeMatch) {
+        amount = parseInt(rupeeMatch[1]);
+      } else {
+        const lower = clean.toLowerCase();
+        if (lower.includes('eighteen thousand') || lower.includes('18000')) amount = 18000;
+        else if (lower.includes('twenty thousand') || lower.includes('20000')) amount = 20000;
+        else if (lower.includes('twenty five thousand') || lower.includes('25000')) amount = 25000;
+        else if (lower.includes('thirty thousand') || lower.includes('30000')) amount = 30000;
+        else if (lower.includes('fifteen thousand') || lower.includes('15000')) amount = 15000;
+        else if (lower.includes('ten thousand') || lower.includes('10000')) amount = 10000;
+      }
+
+      if (amount >= 500) {
+        setFormData(prev => ({
+          ...prev,
+          farmerLossEstimate: amount,
+          expectedClaim: amount
+        }));
+        parsedItems.push(`Loss: ₹${amount.toLocaleString()}`);
+      }
+    }
+
+    if (parsedItems.length > 0) {
+      setLastParsedSummary(`✓ Parsed: ${parsedItems.join(' • ')}`);
+    } else {
+      setLastParsedSummary(`✓ Answer received: "${clean.slice(0, 32)}..."`);
+    }
+  };
+
+  const handleUseSampleAnswer = (sample: string) => {
+    parseSpokenTextForStep(sample, currentStep, true);
+  };
+
+  // Robust Speech Recognition
+  const toggleSpeechRecognition = async () => {
+    if (!isSpeechRecognitionSupported()) {
+      setRecErrorMsg('Web Speech Recognition is not supported by your browser. Click any Quick Voice Answer below or type manually.');
       return;
     }
 
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
     if (isListening) {
-      if (recognitionRef.current) recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // ignore
+        }
+      }
       setIsListening(false);
       return;
     }
 
+    setRecErrorMsg(null);
+    setSpokenTranscript('Listening to your microphone...');
+
+    // Request mic permission proactively to prevent silent failures
     try {
-      const rec = new SpeechRecognition();
-      rec.continuous = false;
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+      }
+    } catch (e) {
+      console.warn('Microphone permission check note:', e);
+    }
+
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = true;
       rec.interimResults = true;
+      rec.maxAlternatives = 1;
       rec.lang = language === 'kn' ? 'kn-IN' : 'en-IN';
 
       rec.onstart = () => {
         setIsListening(true);
-        setSpokenTranscript('');
+        setRecErrorMsg(null);
       };
 
       rec.onresult = (event: any) => {
-        const text = Array.from(event.results)
+        const results = Array.from(event.results);
+        const transcriptText = results
           .map((r: any) => r[0].transcript)
           .join('');
-        setSpokenTranscript(text);
-
-        // Apply simple contextual parsing
-        if (currentStep === 4) {
-          setFormData(prev => ({ ...prev, description: text }));
-        } else if (currentStep === 1) {
-          if (text.length > 3) setFormData(prev => ({ ...prev, farmerName: text }));
+        if (transcriptText) {
+          setSpokenTranscript(transcriptText);
+          parseSpokenTextForStep(transcriptText, currentStep);
         }
       };
 
-      rec.onerror = () => {
+      rec.onerror = (event: any) => {
+        const err = event.error;
+        console.warn('Speech Recognition error:', err);
+        if (err === 'no-speech') {
+          setRecErrorMsg('No speech heard yet. Speak into your microphone or try the quick voice samples.');
+        } else if (err === 'network') {
+          setRecErrorMsg('Google speech service connection timed out. Click any Quick Voice Answer below to test instantly.');
+        } else if (err === 'not-allowed') {
+          setRecErrorMsg('Microphone blocked. Please allow microphone in browser URL settings, or click a preset.');
+        } else {
+          setRecErrorMsg(`Mic status: ${err}. You can click any Quick Voice Answer below.`);
+        }
         setIsListening(false);
       };
 
@@ -261,8 +472,9 @@ export const VoiceAssistantModal: React.FC<Props> = ({
       rec.start();
       recognitionRef.current = rec;
     } catch (e) {
-      console.warn('Speech Rec error', e);
+      console.warn('Speech Rec start error:', e);
       setIsListening(false);
+      setRecErrorMsg('Unable to initialize microphone. Please click any Quick Voice Answer below.');
     }
   };
 
@@ -282,13 +494,13 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
-      <div className="relative w-full max-w-3xl bg-slate-900 border border-emerald-500/30 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-xl">
+      <div className="relative w-full max-w-3xl bg-slate-900/95 border border-emerald-500/50 rounded-3xl shadow-[0_25px_60px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col max-h-[92vh] backdrop-blur-2xl">
         {/* Top Header */}
-        <div className="p-4 bg-slate-850 border-b border-slate-700/60 flex items-center justify-between">
+        <div className="p-4.5 bg-slate-900/95 border-b border-white/[0.08] flex items-center justify-between">
           <div className="flex items-center gap-3">
             {/* Animated Avatar */}
-            <div className="relative flex items-center justify-center w-11 h-11 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-400 text-white shadow-lg shadow-emerald-500/20">
+            <div className="relative flex items-center justify-center w-11 h-11 rounded-full bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-400 text-white shadow-xl shadow-emerald-500/35 ring-2 ring-emerald-400/50">
               <span className="text-xl">🤖</span>
               {isSpeaking && (
                 <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
@@ -299,12 +511,14 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">KisanClaim Voice Assistant</h2>
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-500/40">
+                <h2 className="text-base font-bold bg-gradient-to-r from-white via-emerald-100 to-teal-200 bg-clip-text text-transparent">
+                  KisanClaim Voice Assistant
+                </h2>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.25)]">
                   AI Guided Mode
                 </span>
               </div>
-              <p className="text-xs text-slate-400">Step {currentStep} of 6 • Natural voice guidance</p>
+              <p className="text-xs text-slate-300/80">Step {currentStep} of 6 • Natural voice guidance</p>
             </div>
           </div>
 
@@ -312,52 +526,65 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             <button
               onClick={() => {
                 setVoiceEnabled(!voiceEnabled);
-                if (voiceEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+                if (voiceEnabled) stopSpeaking();
               }}
-              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
               title="Toggle audio narration"
             >
               {voiceEnabled ? <Volume2 className="w-5 h-5 text-emerald-400" /> : <VolumeX className="w-5 h-5" />}
             </button>
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Progress Bar */}
-        <div className="w-full bg-slate-800 h-1.5">
+        {/* Progress Bar with Glowing Accent */}
+        <div className="w-full bg-slate-950 h-2 overflow-hidden border-b border-slate-800">
           <div
-            className="bg-gradient-to-r from-emerald-500 to-cyan-400 h-full transition-all duration-500"
+            className="bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 h-full transition-all duration-500 shadow-[0_0_12px_rgba(16,185,129,0.6)]"
             style={{ width: `${(currentStep / 6) * 100}%` }}
           />
         </div>
 
         {/* Question Bubble & Audio Waves */}
-        <div className="p-6 bg-slate-900/90 border-b border-slate-800 flex items-start gap-4">
-          <div className="p-3 bg-emerald-950/70 border border-emerald-500/30 rounded-2xl flex-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 block mb-1">
+        <div className="p-6 bg-slate-900/90 border-b border-slate-800/80 flex items-start gap-4">
+          <div className="p-4 bg-gradient-to-r from-emerald-950/80 via-teal-950/60 to-slate-900 border border-emerald-500/40 rounded-2xl flex-1 shadow-lg shadow-emerald-950/40">
+            <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400 block mb-1">
               {currentQ.title}
             </span>
-            <p className="text-base font-semibold text-white leading-relaxed">
+            <p className="text-base font-bold text-white leading-relaxed">
               "{language === 'kn' ? currentQ.questionKn : currentQ.questionEn}"
             </p>
-            <p className="text-xs text-slate-400 mt-2 flex items-center gap-1.5">
+            <p className="text-xs text-emerald-300/80 mt-2 flex items-center gap-1.5 font-medium">
               <Sparkles className="w-3.5 h-3.5 text-cyan-400" /> {currentQ.subtext}
             </p>
           </div>
 
-          {/* Repeat Question Button */}
+          {/* Repeat / Listen Question Button */}
           <button
-            onClick={() => speakQuestion(language === 'kn' ? currentQ.questionKn : currentQ.questionEn)}
-            className="p-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex flex-col items-center gap-1 text-[10px]"
-            title="Hear Question Again"
+            onClick={toggleSpeakQuestion}
+            className={`p-3 rounded-xl transition flex flex-col items-center gap-1 text-[10px] font-bold cursor-pointer ${
+              isSpeaking
+                ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+            }`}
+            title={isSpeaking ? 'Stop Audio' : 'Hear Question Read Aloud'}
           >
-            <RotateCcw className="w-4 h-4 text-emerald-400" />
-            <span>Repeat</span>
+            {isSpeaking ? (
+              <>
+                <VolumeX className="w-4 h-4 text-red-400" />
+                <span>Stop</span>
+              </>
+            ) : (
+              <>
+                <Volume2 className="w-4 h-4 text-emerald-400" />
+                <span>Listen</span>
+              </>
+            )}
           </button>
         </div>
 
@@ -838,23 +1065,70 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           )}
         </div>
 
+        {/* Quick Voice Answers Strip for Current Step */}
+        {currentStep <= 5 && sampleAnswersForStep[currentStep] && (
+          <div className="px-4 py-2 bg-slate-900/95 border-t border-slate-800 flex items-center gap-2 overflow-x-auto text-xs no-scrollbar">
+            <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-cyan-400" /> Quick Voice Answers:
+            </span>
+            {sampleAnswersForStep[currentStep].map((sample, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => handleUseSampleAnswer(sample)}
+                className="px-2.5 py-1 rounded-xl bg-slate-800/90 hover:bg-emerald-950/80 hover:border-emerald-500/60 text-slate-300 hover:text-white border border-slate-700/80 whitespace-nowrap text-[11px] transition flex items-center gap-1.5 cursor-pointer shadow-sm group"
+                title="Click to simulate speaking this answer"
+              >
+                <Mic className="w-3 h-3 text-emerald-400 group-hover:scale-110 transition-transform" />
+                <span>"{sample}"</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Bottom Action Footer */}
-        <div className="p-4 bg-slate-850 border-t border-slate-800 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+        <div className="p-4 bg-slate-850 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Microphone Button */}
             <button
               onClick={toggleSpeechRecognition}
-              className={`p-3 rounded-2xl font-semibold flex items-center gap-2 text-xs transition-all ${
+              className={`px-3.5 py-2.5 rounded-2xl font-bold flex items-center gap-2 text-xs transition-all cursor-pointer ${
                 isListening
-                  ? 'bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/40'
+                  ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40 ring-2 ring-red-400'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30'
               }`}
             >
-              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              <span>{isListening ? 'Listening...' : 'Speak Answer'}</span>
+              {isListening ? (
+                <>
+                  <MicOff className="w-4 h-4 animate-bounce" />
+                  <span>Listening... (Click to Stop)</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="w-4 h-4" />
+                  <span>Speak Answer</span>
+                </>
+              )}
             </button>
 
-            {spokenTranscript && (
+            {/* Recognized or Parsed Feedback */}
+            {lastParsedSummary && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs font-medium">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                <span className="truncate max-w-xs">{lastParsedSummary}</span>
+              </div>
+            )}
+
+            {/* Error or Help Tip */}
+            {recErrorMsg && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/70 border border-amber-500/40 rounded-xl text-amber-300 text-xs">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                <span className="truncate max-w-xs">{recErrorMsg}</span>
+              </div>
+            )}
+
+            {/* Spoken Transcript Live Preview */}
+            {!lastParsedSummary && spokenTranscript && (
               <span className="text-xs text-slate-300 italic truncate max-w-xs">
                 "{spokenTranscript}"
               </span>
@@ -865,7 +1139,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             {currentStep > 1 && (
               <button
                 onClick={handleBack}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1"
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1 cursor-pointer"
               >
                 <ArrowLeft className="w-3.5 h-3.5" /> Back
               </button>
@@ -873,14 +1147,14 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
             <button
               onClick={handleNext}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl text-xs font-semibold flex items-center gap-1"
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl text-xs font-semibold flex items-center gap-1 cursor-pointer"
             >
               <SkipForward className="w-3.5 h-3.5" /> Skip
             </button>
 
             <button
               onClick={handleNext}
-              className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-600/30"
+              className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 cursor-pointer"
             >
               <span>{currentStep === 6 ? 'Submit Claim & Analyze' : 'Continue'}</span>
               <ArrowRight className="w-4 h-4" />

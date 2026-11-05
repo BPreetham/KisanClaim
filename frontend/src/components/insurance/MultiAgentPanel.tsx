@@ -150,43 +150,55 @@ export const MultiAgentPanel: React.FC<Props> = ({ claim, onRunAgents }) => {
           <button
             onClick={handleRunAllSequentially}
             disabled={isBatchRunning || verifiedCount === claim.ai_agents.length}
-            className="px-4 py-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-600/25 transition cursor-pointer"
+            className="px-4 py-2.5 bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 disabled:opacity-50 text-white text-xs font-black rounded-xl flex items-center gap-2 shadow-xl shadow-emerald-500/30 transition-all cursor-pointer transform hover:-translate-y-0.5"
           >
-            <Zap className={`w-3.5 h-3.5 ${isBatchRunning ? 'animate-bounce text-amber-300' : 'text-amber-200'}`} />
+            <Zap className={`w-3.5 h-3.5 ${isBatchRunning ? 'animate-bounce text-amber-200' : 'text-amber-300'}`} />
             <span>{isBatchRunning ? 'Running Swarm Audit...' : '⚡ Run All Agents Sequentially'}</span>
           </button>
         </div>
       </div>
 
-      {/* Progress & Consensus Status Meter */}
-      <div className="my-4 p-4 bg-slate-950/80 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-cyan-500/10 text-cyan-400 rounded-xl border border-cyan-500/20">
-            <Sparkles className="w-4 h-4" />
+      {/* Progress & Consensus Status Meter with Multi-Color Progress Bar */}
+      <div className="my-4 p-4.5 bg-gradient-to-r from-slate-950/90 via-slate-900/90 to-slate-950/90 rounded-2xl border border-slate-700/80 shadow-lg text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-cyan-500/15 text-cyan-300 rounded-xl border border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.2)]">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-bold text-white text-sm">
+                Swarm Audit Progress: <span className="text-cyan-400 font-mono">{verifiedCount} / {claim.ai_agents.length} Agents Executed</span>
+              </div>
+              <div className="text-[11px] text-slate-300/80 mt-0.5">
+                {verifiedCount === 0 
+                  ? 'Press "Submit & Check" on any agent card below to analyze evidence live.' 
+                  : `${passedCount} passed integrity audit • ${flaggedCount > 0 ? `${flaggedCount} flagged anomalies` : 'Zero anomalies detected'}`}
+              </div>
+            </div>
           </div>
-          <div>
-            <div className="font-bold text-white">
-              Swarm Audit Progress: <span className="text-cyan-400 font-mono">{verifiedCount} / {claim.ai_agents.length} Agents Executed</span>
-            </div>
-            <div className="text-[11px] text-slate-400">
-              {verifiedCount === 0 
-                ? 'Press "Submit & Check Score" on any agent card below to analyze evidence.' 
-                : `${passedCount} passed integrity audit • ${flaggedCount > 0 ? `${flaggedCount} flagged anomalies` : 'Zero anomalies detected'}`}
-            </div>
+
+          {/* Live Swarm Likelihood Score (revealed when agents are checked) */}
+          <div className="text-right">
+            <span className="text-[10px] text-slate-400 uppercase font-semibold block">Consensus Confidence</span>
+            {verifiedCount > 0 ? (
+              <span className={`text-lg font-black font-mono ${flaggedCount > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-400'}`}>
+                {Math.round((verifiedAgents.reduce((acc, a) => acc + a.score, 0)) / verifiedCount)}%
+                <span className="text-xs font-normal text-slate-400 ml-1">({flaggedCount > 0 ? 'High Risk' : 'High Confidence'})</span>
+              </span>
+            ) : (
+              <span className="text-xs font-mono text-slate-500 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                Awaiting Verification
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Live Swarm Likelihood Score (revealed when agents are checked) */}
-        <div className="text-right">
-          <span className="text-[10px] text-slate-400 uppercase font-semibold block">Consensus Confidence</span>
-          {verifiedCount > 0 ? (
-            <span className={`text-base font-black font-mono ${flaggedCount > 0 ? 'text-red-400 animate-pulse' : 'text-emerald-400'}`}>
-              {Math.round((verifiedAgents.reduce((acc, a) => acc + a.score, 0)) / verifiedCount)}%
-              <span className="text-xs font-normal text-slate-400 ml-1">({flaggedCount > 0 ? 'High Risk' : 'High Confidence'})</span>
-            </span>
-          ) : (
-            <span className="text-sm font-mono text-slate-500">Awaiting Verification</span>
-          )}
+        {/* Dynamic Vibrant Progress Bar */}
+        <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden border border-slate-800 mt-3.5">
+          <div
+            className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 transition-all duration-500 shadow-[0_0_12px_rgba(16,185,129,0.5)]"
+            style={{ width: `${(verifiedCount / claim.ai_agents.length) * 100}%` }}
+          />
         </div>
       </div>
 
@@ -205,11 +217,11 @@ export const MultiAgentPanel: React.FC<Props> = ({ claim, onRunAgents }) => {
               className={`rounded-2xl border transition-all overflow-hidden ${
                 isVerified
                   ? isPassed
-                    ? 'bg-slate-950/80 border-emerald-500/30'
-                    : 'bg-red-950/30 border-red-500/50 shadow-lg shadow-red-950/40'
+                    ? 'bg-gradient-to-r from-emerald-950/40 via-slate-900/90 to-slate-950/90 border-emerald-500/40 shadow-[0_4px_20px_rgba(16,185,129,0.15)]'
+                    : 'bg-gradient-to-r from-rose-950/40 via-slate-900/90 to-slate-950/90 border-rose-500/60 shadow-[0_4px_25px_rgba(244,63,94,0.25)]'
                   : isChecking
-                  ? 'bg-cyan-950/20 border-cyan-500/50 shadow-md shadow-cyan-950/30 animate-pulse'
-                  : 'bg-slate-950/50 border-slate-800 hover:border-slate-700'
+                  ? 'bg-gradient-to-r from-cyan-950/40 via-slate-900/90 to-slate-950/90 border-cyan-400/60 shadow-[0_4px_20px_rgba(6,182,212,0.3)] animate-pulse'
+                  : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/60'
               }`}
             >
               {/* Header Row */}
@@ -217,10 +229,9 @@ export const MultiAgentPanel: React.FC<Props> = ({ claim, onRunAgents }) => {
                 <div className="flex items-center gap-3.5 min-w-[240px] flex-1">
                   <div className={`p-2.5 rounded-xl border ${
                     isVerified 
-                      ? isPassed ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'
+                      ? isPassed ? 'bg-emerald-500/15 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'bg-rose-500/20 border-rose-500/40 shadow-[0_0_10px_rgba(244,63,94,0.2)]'
                       : 'bg-slate-900 border-slate-800'
                   }`}>
-                    {getAgentIcon(ag.agent_role)}
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
@@ -288,7 +299,7 @@ export const MultiAgentPanel: React.FC<Props> = ({ claim, onRunAgents }) => {
                         type="button"
                         onClick={() => handleVerifyAgent(ag.agent_id)}
                         disabled={isBatchRunning}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl border border-slate-700 flex items-center gap-1.5 transition cursor-pointer"
+                        className="px-3 py-1.5 bg-slate-900/90 hover:bg-slate-800 text-cyan-300 hover:text-white text-xs font-bold rounded-xl border border-cyan-500/30 hover:border-cyan-400 flex items-center gap-1.5 transition cursor-pointer shadow-sm"
                         title="Re-run this agent"
                       >
                         <RefreshCw className="w-3 h-3 text-cyan-400" />
@@ -297,9 +308,9 @@ export const MultiAgentPanel: React.FC<Props> = ({ claim, onRunAgents }) => {
                     ) : isChecking ? (
                       <button
                         disabled
-                        className="px-3.5 py-1.5 bg-cyan-950 text-cyan-300 border border-cyan-500/40 text-xs font-bold rounded-xl flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-cyan-950 to-blue-950 text-cyan-300 border border-cyan-400/60 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.3)] animate-pulse"
                       >
-                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
                         <span>Checking...</span>
                       </button>
                     ) : (
@@ -307,9 +318,9 @@ export const MultiAgentPanel: React.FC<Props> = ({ claim, onRunAgents }) => {
                         type="button"
                         onClick={() => handleVerifyAgent(ag.agent_id)}
                         disabled={isBatchRunning}
-                        className="px-3.5 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-cyan-600/20 flex items-center gap-1.5 transition cursor-pointer group"
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-cyan-500 via-teal-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-white text-xs font-black rounded-xl shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 flex items-center gap-1.5 transition-all transform hover:-translate-y-0.5 cursor-pointer group"
                       >
-                        <Play className="w-3 h-3 text-cyan-200 fill-cyan-200 group-hover:scale-110 transition-transform" />
+                        <Play className="w-3 h-3 text-white fill-white group-hover:scale-110 transition-transform" />
                         <span>Submit & Check</span>
                       </button>
                     )}
