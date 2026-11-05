@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Phone, Building2, KeyRound, ArrowRight, UserPlus, HelpCircle, Sparkles, Globe, AlertCircle, CheckCircle2, Lock } from 'lucide-react';
+import { ShieldCheck, Phone, Building2, KeyRound, ArrowRight, UserPlus, HelpCircle, Sparkles, Globe, AlertCircle, CheckCircle2, Lock, MapPin, Crosshair, Navigation, ArrowLeft } from 'lucide-react';
 import { UserSession } from '../../types';
 import { loginFarmer, registerFarmer, loginInsurance } from '../../services/api';
+import { encodeDigipin } from '../../utils/digipin';
 
 interface Props {
   onLoginSuccess: (session: UserSession) => void;
@@ -22,12 +23,17 @@ export const AuthPage: React.FC<Props> = ({
   const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
   const [showForgotModal, setShowForgotModal] = useState<boolean>(false);
 
-  // Register Form State
+  // Register Form State (2-Step Registration: 1. Identity, 2. Land Parcel & Satellite GPS)
+  const [regStep, setRegStep] = useState<1 | 2>(1);
   const [regName, setRegName] = useState<string>('');
   const [regMobile, setRegMobile] = useState<string>('');
   const [regState, setRegState] = useState<string>('Karnataka');
   const [regDistrict, setRegDistrict] = useState<string>('Bengaluru Rural');
   const [regVillage, setRegVillage] = useState<string>('Devanahalli');
+  const [regSurveyNumber, setRegSurveyNumber] = useState<string>('125/2');
+  const [regLatitude, setRegLatitude] = useState<number>(13.2456);
+  const [regLongitude, setRegLongitude] = useState<number>(77.7123);
+  const [regAreaAcres, setRegAreaAcres] = useState<number>(2.5);
 
   // Insurance Form State
   const [companyId, setCompanyId] = useState<string>('AGRI-INS-409');
@@ -104,24 +110,19 @@ export const AuthPage: React.FC<Props> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-emerald-500 selection:text-white relative overflow-hidden">
-      {/* Background Decorative Ambient Lights */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-500/12 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-3/4 left-1/4 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-emerald-500 selection:text-white">
       {/* Top Header */}
-      <header className="p-4 sm:p-6 max-w-7xl w-full mx-auto flex items-center justify-between relative z-10">
+      <header className="p-4 sm:p-6 max-w-7xl w-full mx-auto flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-400 text-white shadow-xl shadow-emerald-500/30 text-2xl font-bold ring-2 ring-emerald-400/30 transform hover:scale-105 transition-transform">
+          <div className="flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 text-white shadow-xl shadow-emerald-500/20 text-2xl font-bold">
             🌾
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xl font-black tracking-tight bg-gradient-to-r from-white via-slate-100 to-emerald-200 bg-clip-text text-transparent">
-                Kisan<span className="bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">Claim</span>
+              <span className="text-xl font-black text-white tracking-tight">
+                Kisan<span className="text-emerald-400">Claim</span>
               </span>
-              <span className="text-[10px] font-extrabold bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-[0_0_12px_rgba(16,185,129,0.25)]">
+              <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase">
                 AI Satellite Intelligence
               </span>
             </div>
@@ -132,7 +133,7 @@ export const AuthPage: React.FC<Props> = ({
         {/* Language Switcher */}
         <button
           onClick={() => onLanguageChange(language === 'en' ? 'kn' : 'en')}
-          className="px-3 py-1.5 bg-slate-900/90 hover:bg-slate-850 text-cyan-300 hover:text-cyan-200 rounded-xl border border-cyan-500/30 hover:border-cyan-400/60 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+          className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
         >
           <Globe className="w-3.5 h-3.5 text-cyan-400" />
           <span>{language === 'en' ? 'ಕನ್ನಡ' : 'English'}</span>
@@ -140,18 +141,18 @@ export const AuthPage: React.FC<Props> = ({
       </header>
 
       {/* Main Login Card Container */}
-      <main className="flex-1 flex items-center justify-center p-4 relative z-10">
+      <main className="flex-1 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           {/* Dual Persona Switcher Tabs */}
-          <div className="flex bg-slate-900/95 p-1.5 rounded-2xl border border-white/[0.08] mb-6 shadow-2xl backdrop-blur-xl">
+          <div className="flex bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800 mb-6 shadow-xl backdrop-blur-md">
             <button
               onClick={() => {
                 setActiveTab('farmer');
                 setErrorMsg(null);
               }}
-              className={`flex-1 py-3.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              className={`flex-1 py-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 activeTab === 'farmer'
-                  ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-white shadow-lg shadow-emerald-500/30 ring-1 ring-white/20'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-600/30'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -164,9 +165,9 @@ export const AuthPage: React.FC<Props> = ({
                 setActiveTab('insurance');
                 setErrorMsg(null);
               }}
-              className={`flex-1 py-3.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              className={`flex-1 py-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                 activeTab === 'insurance'
-                  ? 'bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-500 text-white shadow-lg shadow-blue-500/30 ring-1 ring-white/20'
+                  ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg shadow-blue-600/30'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -177,7 +178,7 @@ export const AuthPage: React.FC<Props> = ({
 
           {/* Error Message Alert */}
           {errorMsg && (
-            <div className="mb-4 p-3 bg-red-950/80 border border-red-500/50 rounded-xl text-xs text-red-200 flex items-center gap-2 animate-shake shadow-lg shadow-red-500/20">
+            <div className="mb-4 p-3 bg-red-950/60 border border-red-500/40 rounded-xl text-xs text-red-200 flex items-center gap-2 animate-shake">
               <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
               <span>{errorMsg}</span>
             </div>
@@ -185,16 +186,16 @@ export const AuthPage: React.FC<Props> = ({
 
           {/* ================= FARMER LOGIN CARD ================= */}
           {activeTab === 'farmer' ? (
-            <div className="bg-slate-900/90 rounded-3xl border border-emerald-500/40 p-6 sm:p-8 shadow-[0_20px_50px_rgba(16,185,129,0.2)] backdrop-blur-2xl relative overflow-hidden">
+            <div className="bg-slate-900/90 rounded-3xl border border-emerald-500/30 p-6 sm:p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden">
               <div className="flex items-center gap-3 mb-5">
-                <div className="p-3 bg-emerald-500/20 text-emerald-400 rounded-2xl border border-emerald-500/40 shadow-inner">
+                <div className="p-3 bg-emerald-500/20 text-emerald-400 rounded-2xl border border-emerald-500/30">
                   <Phone className="w-5 h-5" />
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-white">
                     {language === 'kn' ? 'ರೈತರ ಮೊಬೈಲ್ ಸಂಖ್ಯೆ ಲಾಗಿನ್' : 'Farmer Mobile Sign-In'}
                   </h2>
-                  <p className="text-xs text-emerald-300/80">
+                  <p className="text-xs text-slate-400">
                     {language === 'kn' ? 'ನಿಮ್ಮ ಮೊಬೈಲ್ ಸಂಖ್ಯೆ ನಮೂದಿಸಿ ಪ್ರವೇಶಿಸಿ' : 'Enter your registered mobile number'}
                   </p>
                 </div>
@@ -206,7 +207,7 @@ export const AuthPage: React.FC<Props> = ({
                     {language === 'kn' ? 'ಮೊಬೈಲ್ ಸಂಖ್ಯೆ' : 'Mobile Number'}
                   </label>
                   <div className="relative flex items-center">
-                    <span className="absolute left-3.5 text-xs text-emerald-400 font-bold border-r border-slate-700 pr-2">
+                    <span className="absolute left-3.5 text-xs text-slate-400 font-bold border-r border-slate-700 pr-2">
                       +91
                     </span>
                     <input
@@ -216,7 +217,7 @@ export const AuthPage: React.FC<Props> = ({
                       value={farmerMobile}
                       onChange={e => setFarmerMobile(e.target.value.replace(/\D/g, ''))}
                       placeholder="9876543210"
-                      className="w-full bg-slate-950/90 border border-slate-700/80 focus:border-emerald-400 rounded-xl pl-16 pr-4 py-2.5 text-sm text-white font-mono outline-none tracking-wider shadow-inner"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-16 pr-4 py-2.5 text-sm text-white font-mono outline-none focus:border-emerald-500 tracking-wider"
                     />
                   </div>
                 </div>
@@ -229,28 +230,50 @@ export const AuthPage: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => setShowForgotModal(true)}
-                      className="text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold hover:underline"
+                      className="text-[11px] text-emerald-400 hover:underline"
                     >
                       {language === 'kn' ? 'ಸಹಾಯ ಬೇಕೇ?' : 'Forgot PIN?'}
                     </button>
                   </div>
                   <div className="relative flex items-center">
-                    <KeyRound className="absolute left-3.5 w-4 h-4 text-emerald-400/80" />
+                    <KeyRound className="absolute left-3.5 w-4 h-4 text-slate-500" />
                     <input
                       type="password"
                       value={farmerOtp}
                       onChange={e => setFarmerOtp(e.target.value)}
                       placeholder="1234"
-                      className="w-full bg-slate-950/90 border border-slate-700/80 focus:border-emerald-400 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono outline-none shadow-inner"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono outline-none focus:border-emerald-500"
                     />
                   </div>
+                </div>
+
+                {/* Cadastral GPS & Satellite Link Status */}
+                <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between text-[11px]">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-slate-300 font-mono">
+                      {farmerMobile === '9876543210'
+                        ? 'Survey 125/2 • 13.2456°N, 77.7123°E'
+                        : farmerMobile === '9845123456'
+                        ? 'Survey 48/1A • 16.4312°N, 74.5982°E'
+                        : farmerMobile === '9900112233'
+                        ? 'Survey 88/2 • 13.0722°N, 77.7981°E'
+                        : 'Survey 125/2 • 13.2456°N, 77.7123°E'}
+                    </span>
+                  </div>
+                  <span className="text-cyan-300 font-mono font-bold">
+                    {encodeDigipin(
+                      farmerMobile === '9845123456' ? 16.4312 : farmerMobile === '9900112233' ? 13.0722 : 13.2456,
+                      farmerMobile === '9845123456' ? 74.5982 : farmerMobile === '9900112233' ? 77.7981 : 77.7123
+                    )}
+                  </span>
                 </div>
 
                 {/* Submit Button */}
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-3.5 bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <span>{loading ? 'Verifying...' : language === 'kn' ? 'ಮುಂದುವರಿಯಿರಿ' : 'Log In to Farmer Portal'}</span>
                   <ArrowRight className="w-4 h-4" />
@@ -258,24 +281,24 @@ export const AuthPage: React.FC<Props> = ({
               </form>
 
               {/* Demo Quick Logins for Judges */}
-              <div className="mt-6 pt-5 border-t border-slate-800/80">
-                <span className="text-[10px] uppercase font-bold text-emerald-400 block mb-2.5 text-center tracking-wider flex items-center justify-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" /> 1-Click Demo Logins for Hackathon Judges
+              <div className="mt-6 pt-5 border-t border-slate-800">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-2 text-center">
+                  ⚡ 1-Click Demo Logins for Hackathon Judges
                 </span>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <button
                     type="button"
                     onClick={() => {
                       setFarmerMobile('9876543210');
                       handleFarmerLogin(undefined, '9876543210');
                     }}
-                    className="w-full p-3 bg-gradient-to-r from-emerald-950/80 to-slate-900/90 hover:from-emerald-900/90 hover:to-teal-950/80 border border-emerald-500/50 hover:border-emerald-400 rounded-2xl text-left text-xs transition-all shadow-md hover:shadow-[0_0_20px_rgba(16,185,129,0.25)] flex items-center justify-between cursor-pointer group"
+                    className="w-full p-2 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/40 rounded-xl text-left text-xs transition flex items-center justify-between cursor-pointer"
                   >
                     <div>
-                      <strong className="text-white group-hover:text-emerald-200 block transition-colors">🌱 Ravi Kumar (Real Flood-Affected Farmer)</strong>
-                      <span className="text-[11px] text-emerald-300">Devanahalli • Verified Claim KSN-1025 (NDVI -62%, 142mm rain)</span>
+                      <strong className="text-white block">🌱 Ravi Kumar (Real Flood-Affected Farmer)</strong>
+                      <span className="text-[11px] text-emerald-400">Devanahalli • Verified Claim KSN-1025 (NDVI -62%, 142mm rain)</span>
                     </div>
-                    <span className="text-[10px] font-mono text-emerald-200 bg-emerald-500/30 px-2.5 py-1 rounded-lg font-bold border border-emerald-400/40 shadow-sm">
+                    <span className="text-[10px] font-mono text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded font-bold">
                       VERIFIED REAL
                     </span>
                   </button>
@@ -286,13 +309,13 @@ export const AuthPage: React.FC<Props> = ({
                       setFarmerMobile('9900112233');
                       handleFarmerLogin(undefined, '9900112233');
                     }}
-                    className="w-full p-3 bg-gradient-to-r from-rose-950/80 to-slate-900/90 hover:from-rose-900/90 hover:to-red-950/80 border border-rose-500/60 hover:border-rose-400 rounded-2xl text-left text-xs transition-all shadow-md hover:shadow-[0_0_20px_rgba(244,63,94,0.3)] flex items-center justify-between cursor-pointer animate-pulse group"
+                    className="w-full p-2 bg-red-950/60 hover:bg-red-900/60 border border-red-500/50 rounded-xl text-left text-xs transition flex items-center justify-between cursor-pointer animate-pulse"
                   >
                     <div>
-                      <strong className="text-rose-200 group-hover:text-white block transition-colors">🚨 Vikram Singh (Fraud Demo — Fake Images)</strong>
-                      <span className="text-[11px] text-rose-300/90">Hosakote • Spoofed GPS (14km), Dry Satellite (0.76 NDVI)</span>
+                      <strong className="text-red-200 block">🚨 Vikram Singh (Fraud Demo — Fake Images)</strong>
+                      <span className="text-[11px] text-red-300">Hosakote • Spoofed GPS (14km), Dry Satellite (0.76 NDVI)</span>
                     </div>
-                    <span className="text-[10px] font-mono text-rose-200 bg-rose-500/30 px-2.5 py-1 rounded-lg font-bold border border-rose-400/50 shadow-sm">
+                    <span className="text-[10px] font-mono text-red-300 bg-red-500/30 px-2 py-0.5 rounded font-bold border border-red-500/50">
                       FLAGGED FAKE
                     </span>
                   </button>
@@ -303,15 +326,13 @@ export const AuthPage: React.FC<Props> = ({
                       setFarmerMobile('9845123456');
                       handleFarmerLogin(undefined, '9845123456');
                     }}
-                    className="w-full p-2.5 bg-slate-950/80 hover:bg-slate-900/90 border border-slate-700/80 hover:border-cyan-500/50 rounded-2xl text-left text-xs transition-all flex items-center justify-between cursor-pointer"
+                    className="w-full p-2 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 rounded-xl text-left text-xs transition flex items-center justify-between cursor-pointer"
                   >
                     <div>
                       <strong className="text-slate-200 block">Suresh Patil (Belagavi — Sugarcane)</strong>
                       <span className="text-[11px] text-slate-400">Sugarcane Flood Claim KSN-1088 (Approved)</span>
                     </div>
-                    <span className="text-[10px] font-mono text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/30">
-                      9845123456
-                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">9845123456</span>
                   </button>
                 </div>
 
@@ -319,7 +340,7 @@ export const AuthPage: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => setShowRegisterModal(true)}
-                    className="text-xs text-emerald-400 hover:text-emerald-300 font-bold hover:underline flex items-center justify-center gap-1.5 mx-auto"
+                    className="text-xs text-emerald-400 font-semibold hover:underline flex items-center justify-center gap-1.5 mx-auto"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
                     <span>{language === 'kn' ? 'ಹೊಸ ರೈತರ ನೋಂದಣಿ' : 'New Farmer? Register Parcel & Profile'}</span>
@@ -329,16 +350,16 @@ export const AuthPage: React.FC<Props> = ({
             </div>
           ) : (
             /* ================= INSURANCE COMPANY LOGIN CARD ================= */
-            <div className="bg-slate-900/90 rounded-3xl border border-cyan-500/40 p-6 sm:p-8 shadow-[0_20px_50px_rgba(6,182,212,0.2)] backdrop-blur-2xl relative overflow-hidden">
+            <div className="bg-slate-900/90 rounded-3xl border border-blue-500/30 p-6 sm:p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden">
               <div className="flex items-center gap-3 mb-5">
-                <div className="p-3 bg-cyan-500/20 text-cyan-400 rounded-2xl border border-cyan-500/40 shadow-inner">
+                <div className="p-3 bg-blue-500/20 text-cyan-400 rounded-2xl border border-blue-500/30">
                   <Building2 className="w-5 h-5" />
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-white">
                     Insurance Adjudicator Sign-In
                   </h2>
-                  <p className="text-xs text-cyan-300/80">
+                  <p className="text-xs text-slate-400">
                     Satellite Evidence & Claim Review Console
                   </p>
                 </div>
@@ -350,14 +371,14 @@ export const AuthPage: React.FC<Props> = ({
                     Insurance Company / Reviewer ID
                   </label>
                   <div className="relative flex items-center">
-                    <Building2 className="absolute left-3.5 w-4 h-4 text-cyan-400/80" />
+                    <Building2 className="absolute left-3.5 w-4 h-4 text-slate-500" />
                     <input
                       type="text"
                       required
                       value={companyId}
                       onChange={e => setCompanyId(e.target.value)}
                       placeholder="AGRI-INS-409"
-                      className="w-full bg-slate-950/90 border border-slate-700/80 focus:border-cyan-400 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono uppercase outline-none tracking-wider shadow-inner"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono uppercase outline-none focus:border-cyan-500 tracking-wider"
                     />
                   </div>
                 </div>
@@ -369,7 +390,7 @@ export const AuthPage: React.FC<Props> = ({
                   <select
                     value={orgUnit}
                     onChange={e => setOrgUnit(e.target.value)}
-                    className="w-full bg-slate-950/90 border border-slate-700/80 focus:border-cyan-400 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none shadow-inner"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-300 outline-none focus:border-cyan-500"
                   >
                     <option value="Agriculture Insurance Co. of India (PMFBY Division)">Agriculture Insurance Co. of India (AIC - PMFBY Division)</option>
                     <option value="State Crop Loss Review & Risk Desk">State Crop Loss Review & Risk Desk</option>
@@ -382,13 +403,13 @@ export const AuthPage: React.FC<Props> = ({
                     Security Access Code
                   </label>
                   <div className="relative flex items-center">
-                    <Lock className="absolute left-3.5 w-4 h-4 text-cyan-400/80" />
+                    <Lock className="absolute left-3.5 w-4 h-4 text-slate-500" />
                     <input
                       type="password"
                       value={insurancePin}
                       onChange={e => setInsurancePin(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full bg-slate-950/90 border border-slate-700/80 focus:border-cyan-400 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono outline-none shadow-inner"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white font-mono outline-none focus:border-cyan-500"
                     />
                   </div>
                 </div>
@@ -397,7 +418,7 @@ export const AuthPage: React.FC<Props> = ({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-3.5 bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl shadow-blue-500/30 hover:shadow-blue-500/50 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <span>{loading ? 'Authenticating...' : 'Access Reviewer Console'}</span>
                   <ArrowRight className="w-4 h-4" />
@@ -405,9 +426,9 @@ export const AuthPage: React.FC<Props> = ({
               </form>
 
               {/* Demo Quick Login for Judges */}
-              <div className="mt-6 pt-5 border-t border-slate-800/80">
-                <span className="text-[10px] uppercase font-bold text-cyan-400 block mb-2.5 text-center tracking-wider flex items-center justify-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-cyan-300" /> 1-Click Demo Reviewer Access for Judges
+              <div className="mt-6 pt-5 border-t border-slate-800">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-2 text-center">
+                  ⚡ 1-Click Demo Reviewer Access for Judges
                 </span>
                 <button
                   type="button"
@@ -415,13 +436,13 @@ export const AuthPage: React.FC<Props> = ({
                     setCompanyId('AGRI-INS-409');
                     handleInsuranceLogin(undefined, 'AGRI-INS-409');
                   }}
-                  className="w-full p-3 bg-gradient-to-r from-cyan-950/80 to-indigo-950/70 hover:from-cyan-900/90 hover:to-indigo-900/80 border border-cyan-500/50 hover:border-cyan-400 rounded-2xl text-left text-xs transition-all shadow-md hover:shadow-[0_0_20px_rgba(6,182,212,0.25)] flex items-center justify-between cursor-pointer group"
+                  className="w-full p-2.5 bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/40 rounded-xl text-left text-xs transition flex items-center justify-between cursor-pointer"
                 >
                   <div>
-                    <strong className="text-white group-hover:text-cyan-200 block transition-colors">🏢 Lead Adjudicator: Ananya Sharma</strong>
+                    <strong className="text-white block">🏢 Lead Adjudicator: Ananya Sharma</strong>
                     <span className="text-[11px] text-cyan-300">Senior Agronomist • AIC Claims Desk</span>
                   </div>
-                  <span className="text-[10px] font-mono text-cyan-200 bg-cyan-500/30 px-2.5 py-1 rounded-lg font-bold border border-cyan-400/40 shadow-sm">
+                  <span className="text-[10px] font-mono text-cyan-200 bg-cyan-500/20 px-2 py-0.5 rounded">
                     AGRI-INS-409
                   </span>
                 </button>
@@ -435,72 +456,171 @@ export const AuthPage: React.FC<Props> = ({
       {showRegisterModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
           <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 max-w-md w-full shadow-2xl">
-            <h3 className="text-base font-bold text-white mb-1">Register New Farmer Profile</h3>
-            <p className="text-xs text-slate-400 mb-4">Create your farmer identity for PMFBY satellite verification</p>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-base font-bold text-white">Register New Farmer Profile</h3>
+              <span className="text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                Step {regStep} of 2
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              {regStep === 1
+                ? 'Step 1: Farmer personal identity for PMFBY verification'
+                : 'Step 2: Land parcel cadastral coordinates & satellite mapping'}
+            </p>
 
             <form onSubmit={handleFarmerRegister} className="space-y-3 text-xs">
-              <div>
-                <label className="text-slate-300 font-semibold block mb-1">Full Name</label>
-                <input
-                  type="text"
-                  required
-                  value={regName}
-                  onChange={e => setRegName(e.target.value)}
-                  placeholder="e.g. Ramesh Patil"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500"
-                />
-              </div>
+              {regStep === 1 ? (
+                <>
+                  <div>
+                    <label className="text-slate-300 font-semibold block mb-1">Full Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={regName}
+                      onChange={e => setRegName(e.target.value)}
+                      placeholder="e.g. Ramesh Patil"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-emerald-500"
+                    />
+                  </div>
 
-              <div>
-                <label className="text-slate-300 font-semibold block mb-1">Mobile Number</label>
-                <input
-                  type="tel"
-                  required
-                  maxLength={10}
-                  value={regMobile}
-                  onChange={e => setRegMobile(e.target.value.replace(/\D/g, ''))}
-                  placeholder="9876500000"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-emerald-500"
-                />
-              </div>
+                  <div>
+                    <label className="text-slate-300 font-semibold block mb-1">Mobile Number</label>
+                    <input
+                      type="tel"
+                      required
+                      maxLength={10}
+                      value={regMobile}
+                      onChange={e => setRegMobile(e.target.value.replace(/\D/g, ''))}
+                      placeholder="9876500000"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-emerald-500"
+                    />
+                  </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-slate-300 font-semibold block mb-1">District</label>
-                  <input
-                    type="text"
-                    value={regDistrict}
-                    onChange={e => setRegDistrict(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-slate-300 font-semibold block mb-1">Village</label>
-                  <input
-                    type="text"
-                    value={regVillage}
-                    onChange={e => setRegVillage(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
-                  />
-                </div>
-              </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-slate-300 font-semibold block mb-1">District</label>
+                      <input
+                        type="text"
+                        value={regDistrict}
+                        onChange={e => setRegDistrict(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-300 font-semibold block mb-1">Village</label>
+                      <input
+                        type="text"
+                        value={regVillage}
+                        onChange={e => setRegVillage(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white"
+                      />
+                    </div>
+                  </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowRegisterModal(false)}
-                  className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30"
-                >
-                  {loading ? 'Creating...' : 'Register & Enter'}
-                </button>
-              </div>
+                  <div className="flex items-center justify-end gap-2 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowRegisterModal(false)}
+                      className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!regName.trim() || !regMobile.trim()) {
+                          setErrorMsg('Full Name and Mobile are mandatory.');
+                          return;
+                        }
+                        setErrorMsg(null);
+                        setRegStep(2);
+                      }}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Proceed to Step 2</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-slate-300 font-semibold block mb-1">Survey Number</label>
+                      <input
+                        type="text"
+                        value={regSurveyNumber}
+                        onChange={e => setRegSurveyNumber(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-300 font-semibold block mb-1">Land Area (Acres)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={regAreaAcres}
+                        onChange={e => setRegAreaAcres(parseFloat(e.target.value) || 2.5)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-slate-300 font-semibold block mb-1">Latitude (°N)</label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={regLatitude}
+                        onChange={e => setRegLatitude(parseFloat(e.target.value) || 13.2456)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-300 font-semibold block mb-1">Longitude (°E)</label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={regLongitude}
+                        onChange={e => setRegLongitude(parseFloat(e.target.value) || 77.7123)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Satellite DIGIPIN Match Badge */}
+                  <div className="p-3 bg-emerald-950/60 border border-emerald-500/40 rounded-xl space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold">National DIGIPIN</span>
+                      <span className="text-cyan-300 font-mono font-bold">{encodeDigipin(regLatitude, regLongitude)}</span>
+                    </div>
+                    <div className="text-[10px] text-emerald-300 font-semibold flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>4m×4m National Postal Grid Cell Synced</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setRegStep(1)}
+                      className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl flex items-center gap-1 cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Back</span>
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>{loading ? 'Creating...' : 'Register & Enter'}</span>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </>
+              )}
             </form>
           </div>
         </div>

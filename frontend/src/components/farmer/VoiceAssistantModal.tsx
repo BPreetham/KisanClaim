@@ -1,7 +1,43 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Volume2, VolumeX, ArrowRight, ArrowLeft, RotateCcw, SkipForward, CheckCircle2, MapPin, Upload, Camera, Sparkles, X, ShieldAlert, Globe, ExternalLink, RefreshCw, Navigation, Edit3, AlertCircle } from 'lucide-react';
+import {
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  ArrowRight,
+  ArrowLeft,
+  RotateCcw,
+  SkipForward,
+  CheckCircle2,
+  MapPin,
+  Upload,
+  Camera,
+  Sparkles,
+  X,
+  ShieldAlert,
+  Globe,
+  ExternalLink,
+  RefreshCw,
+  Navigation,
+  Edit3,
+  AlertCircle,
+  Maximize2,
+  Trash2,
+  ShieldCheck,
+  Layers
+} from 'lucide-react';
 import { encodeDigipin } from '../../utils/digipin';
-import { speakAloud, stopSpeaking, isSpeechRecognitionSupported, isSpeechSynthesisSupported } from '../../utils/speech';
+import { generateDefaultParcelCoordinates } from '../../utils/geo';
+import { LandPlotMapSelector } from './LandPlotMapSelector';
+import {
+  speakAloud,
+  stopSpeaking,
+  primeSpeechSynthesis,
+  playChime,
+  isSpeechRecognitionSupported,
+  isSpeechSynthesisSupported
+} from '../../utils/speech';
+import { GeoCameraModal, GeoPhoto } from './GeoCameraModal';
 
 interface Props {
   isOpen: boolean;
@@ -24,10 +60,14 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   const [lastParsedSummary, setLastParsedSummary] = useState<string>('');
   const [recErrorMsg, setRecErrorMsg] = useState<string | null>(null);
 
-  // Location Selector Options State
-  const [locationMode, setLocationMode] = useState<'autofetch' | 'manual'>('autofetch');
+  // Camera & Image Preview Modals
+  const [showCameraModal, setShowCameraModal] = useState<boolean>(false);
+  const [selectedPreviewPhoto, setSelectedPreviewPhoto] = useState<any | null>(null);
+
+  // Location Selector Options State: Satellite Plot Map (Default), Auto-Fetch GPS, or Manual Lat/Long
+  const [locationMode, setLocationMode] = useState<'map' | 'autofetch' | 'manual'>('map');
   const [isLocating, setIsLocating] = useState<boolean>(false);
-  const [locationStatus, setLocationStatus] = useState<string>('Ready to fetch device GPS or enter manual coordinates');
+  const [locationStatus, setLocationStatus] = useState<string>('Select and adjust boundary points on satellite map, or use auto-fetch GPS');
 
   // Form State
   const [formData, setFormData] = useState({
@@ -42,6 +82,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     landAreaAcres: 2.5,
     latitude: 13.2456,
     longitude: 77.7123,
+    polygonCoordinates: generateDefaultParcelCoordinates(13.2456, 77.7123),
     cropName: 'Ragi',
     variety: 'GPU-28',
     sowingDate: '2026-06-15',
@@ -125,13 +166,13 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     {
       step: 6,
       title: language === 'kn' ? 'ಛಾಯಾಚಿತ್ರ ಸಾಕ್ಷ್ಯಗಳು' : 'Step 6 — Photographic Evidence with Geo-Tags',
-      questionEn: 'Please capture or upload photographs of the damaged crop, waterlogging, and the whole field.',
-      questionKn: 'ದಯವಿಟ್ಟು ಹಾನಿಗೊಳಗಾದ ಬೆಳೆ ಮತ್ತು ಹೊಲದ ಫೋಟೋಗಳನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ.',
-      subtext: 'Camera coordinates (GPS) and timestamp metadata are verified automatically.'
+      questionEn: 'Please capture ground photographs of the damaged crop and field using your camera.',
+      questionKn: 'ದಯವಿಟ್ಟು ಹಾನಿಗೊಳಗಾದ ಬೆಳೆ ಮತ್ತು ಹೊಲದ ಫೋಟೋಗಳನ್ನು ಕ್ಯಾಮೆರಾ ಮೂಲಕ ಸೆರೆಹಿಡಿಯಿರಿ.',
+      subtext: 'Camera coordinates (GPS) and timestamp metadata are verified and stamped automatically.'
     }
   ];
 
-  const currentQ = questions[currentStep - 1];
+  const currentQ = questions[currentStep - 1] || questions[0];
 
   // Sample voice answers per step for immediate testing & fallback
   const sampleAnswersForStep: Record<number, string[]> = {
@@ -140,6 +181,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
       'Suresh Gowda, 9945012345, Ramanagara'
     ],
     2: [
+      'Survey 125/2, marked 2.5 acres on satellite map',
       'Survey 125/2, 2.5 acres',
       'Survey 88/1, 3.2 acres'
     ],
@@ -172,6 +214,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   };
 
   const toggleSpeakQuestion = () => {
+    primeSpeechSynthesis();
     if (isSpeaking) {
       stopSpeaking();
       setIsSpeaking(false);
@@ -181,15 +224,43 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     }
   };
 
+  // Auto-speak question on step change with debounce
   useEffect(() => {
     if (isOpen && voiceEnabled) {
       const qText = language === 'kn' ? currentQ.questionKn : currentQ.questionEn;
-      speakQuestion(qText);
+      const timer = setTimeout(() => {
+        speakQuestion(qText);
+      }, 350);
+      return () => clearTimeout(timer);
     }
-    return () => {
+  }, [isOpen, currentStep, voiceEnabled, language]);
+
+  // Stop speaking only when modal is closed
+  useEffect(() => {
+    if (!isOpen) {
       stopSpeaking();
-    };
-  }, [isOpen, currentStep]);
+      setIsSpeaking(false);
+    }
+  }, [isOpen]);
+
+  // Handle Interactive Land Plot Selector Change
+  const handlePlotChange = (data: {
+    coords: [number, number][];
+    areaAcres: number;
+    centroidLat: number;
+    centroidLon: number;
+    digipin: string;
+  }) => {
+    setFormData(prev => ({
+      ...prev,
+      polygonCoordinates: data.coords,
+      landAreaAcres: data.areaAcres,
+      latitude: data.centroidLat,
+      longitude: data.centroidLon,
+      digipin: data.digipin
+    }));
+    setLocationStatus(`✓ Plot Polygon & DIGIPIN Aligned: ${data.areaAcres} Acres • DIGIPIN: ${data.digipin}`);
+  };
 
   // Handle GPS Auto-Fetch
   const handleAutoFetchLocation = () => {
@@ -201,11 +272,13 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           const lat = parseFloat(pos.coords.latitude.toFixed(4));
           const lon = parseFloat(pos.coords.longitude.toFixed(4));
           const pin = encodeDigipin(lat, lon);
+          const newCoords = generateDefaultParcelCoordinates(lat, lon);
           setFormData(prev => ({
             ...prev,
             latitude: lat,
             longitude: lon,
-            digipin: pin
+            digipin: pin,
+            polygonCoordinates: newCoords
           }));
           setIsLocating(false);
           setLocationStatus(`✓ Device GPS Locked: ${lat}° N, ${lon}° E (DIGIPIN: ${pin})`);
@@ -215,11 +288,13 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           const lat = 13.2456;
           const lon = 77.7123;
           const pin = encodeDigipin(lat, lon);
+          const newCoords = generateDefaultParcelCoordinates(lat, lon);
           setFormData(prev => ({
             ...prev,
             latitude: lat,
             longitude: lon,
-            digipin: pin
+            digipin: pin,
+            polygonCoordinates: newCoords
           }));
           setIsLocating(false);
           setLocationStatus(`✓ Cadastral Satellite GPS Locked: ${lat}° N, ${lon}° E (Devanahalli)`);
@@ -230,7 +305,14 @@ export const VoiceAssistantModal: React.FC<Props> = ({
       const lat = 13.2456;
       const lon = 77.7123;
       const pin = encodeDigipin(lat, lon);
-      setFormData(prev => ({ ...prev, latitude: lat, longitude: lon, digipin: pin }));
+      const newCoords = generateDefaultParcelCoordinates(lat, lon);
+      setFormData(prev => ({
+        ...prev,
+        latitude: lat,
+        longitude: lon,
+        digipin: pin,
+        polygonCoordinates: newCoords
+      }));
       setIsLocating(false);
       setLocationStatus(`✓ Default Cadastral GPS Locked: ${lat}° N, ${lon}° E`);
     }
@@ -241,15 +323,17 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     const lat = field === 'latitude' ? val : formData.latitude;
     const lon = field === 'longitude' ? val : formData.longitude;
     const pin = encodeDigipin(lat, lon);
+    const newCoords = generateDefaultParcelCoordinates(lat, lon);
     setFormData(prev => ({
       ...prev,
       [field]: val,
-      digipin: pin
+      digipin: pin,
+      polygonCoordinates: newCoords
     }));
     setLocationStatus(`✓ Coordinates Updated: ${lat}° N, ${lon}° E (DIGIPIN: ${pin})`);
   };
 
-  // Contextual Spoken Answer Parser across all 5 steps
+  // Contextual Spoken Answer Parser across all steps
   const parseSpokenTextForStep = (text: string, step: number, isDirectSample = false) => {
     const clean = text.trim();
     if (!clean) return;
@@ -319,119 +403,175 @@ export const VoiceAssistantModal: React.FC<Props> = ({
         }
       }
 
-      const stages = [
-        { name: 'Newly sown', pattern: /newly sown|germination|sowing|sown/i },
-        { name: 'Vegetative stage', pattern: /vegetative|growth|growing|leaf/i },
-        { name: 'Flowering stage', pattern: /flowering|flower|bloom/i },
-        { name: 'Fruiting stage', pattern: /fruiting|fruit|grain/i },
-        { name: 'Near harvest', pattern: /harvest|ripening|mature/i },
-      ];
+      const stages = ['Vegetative stage', 'Flowering stage', 'Maturity stage', 'Harvesting stage'];
       for (const s of stages) {
-        if (s.pattern.test(clean)) {
-          setFormData(prev => ({ ...prev, growthStage: s.name }));
-          parsedItems.push(`Stage: ${s.name}`);
+        const keyword = s.split(' ')[0].toLowerCase();
+        if (clean.toLowerCase().includes(keyword)) {
+          setFormData(prev => ({ ...prev, growthStage: s }));
+          parsedItems.push(`Stage: ${s}`);
           break;
         }
       }
     } else if (step === 4) {
-      // Step 4: Disaster & Severity %
-      const disasters = ['Flood', 'Heavy rainfall', 'Drought', 'Cyclone', 'Hailstorm', 'Landslide', 'Pest attack'];
-      for (const d of disasters) {
-        if (new RegExp(`\\b${d}\\b`, 'i').test(clean)) {
-          setFormData(prev => ({ ...prev, disasterType: d }));
-          parsedItems.push(`Disaster: ${d}`);
-          break;
-        }
+      // Step 4: Disaster & Severity
+      const lower = clean.toLowerCase();
+      if (lower.includes('flood') || lower.includes('waterlog') || lower.includes('submerg') || lower.includes('rain')) {
+        setFormData(prev => ({ ...prev, disasterType: 'Flood' }));
+        parsedItems.push('Disaster: Flood');
+      } else if (lower.includes('drought') || lower.includes('dry')) {
+        setFormData(prev => ({ ...prev, disasterType: 'Drought' }));
+        parsedItems.push('Disaster: Drought');
+      } else if (lower.includes('cyclone') || lower.includes('wind')) {
+        setFormData(prev => ({ ...prev, disasterType: 'Cyclone' }));
+        parsedItems.push('Disaster: Cyclone');
       }
 
-      const pctMatch = clean.match(/([0-9]{1,3})\s*(?:%|percent|percentage)/i);
+      const pctMatch = clean.match(/([0-9]{1,3})\s*(?:percent|%|pct)/i);
       if (pctMatch) {
-        const pct = parseInt(pctMatch[1]);
-        if (pct >= 5 && pct <= 100) {
-          setFormData(prev => ({ ...prev, damagePercentage: pct }));
-          parsedItems.push(`Damage: ${pct}%`);
-        }
+        const pct = Math.min(100, Math.max(10, parseInt(pctMatch[1], 10)));
+        setFormData(prev => ({ ...prev, damagePercentage: pct }));
+        parsedItems.push(`Damage: ${pct}%`);
       }
 
       setFormData(prev => ({ ...prev, description: clean }));
-      parsedItems.push('Statement recorded');
     } else if (step === 5) {
-      // Step 5: Financial Loss in ₹
-      const numClean = clean.replace(/,/g, '');
-      const rupeeMatch = numClean.match(/(?:rs\.?|rupees?|inr|₹)?\s*([0-9]{3,7})/i);
-      let amount = 0;
-      if (rupeeMatch) {
-        amount = parseInt(rupeeMatch[1]);
-      } else {
-        const lower = clean.toLowerCase();
-        if (lower.includes('eighteen thousand') || lower.includes('18000')) amount = 18000;
-        else if (lower.includes('twenty thousand') || lower.includes('20000')) amount = 20000;
-        else if (lower.includes('twenty five thousand') || lower.includes('25000')) amount = 25000;
-        else if (lower.includes('thirty thousand') || lower.includes('30000')) amount = 30000;
-        else if (lower.includes('fifteen thousand') || lower.includes('15000')) amount = 15000;
-        else if (lower.includes('ten thousand') || lower.includes('10000')) amount = 10000;
-      }
-
-      if (amount >= 500) {
-        setFormData(prev => ({
-          ...prev,
-          farmerLossEstimate: amount,
-          expectedClaim: amount
-        }));
-        parsedItems.push(`Loss: ₹${amount.toLocaleString()}`);
+      // Step 5: Financial Loss Estimate
+      const amtMatch = clean.match(/(?:rupees?|rs\.?|₹)?\s*([0-9]+(?:,[0-9]+)*)/i);
+      if (amtMatch) {
+        const rawNum = amtMatch[1].replace(/,/g, '');
+        const loss = parseInt(rawNum, 10);
+        if (loss > 0) {
+          setFormData(prev => ({ ...prev, farmerLossEstimate: loss, expectedClaim: loss }));
+          parsedItems.push(`Loss: ₹${loss.toLocaleString('en-IN')}`);
+        }
       }
     }
 
     if (parsedItems.length > 0) {
-      setLastParsedSummary(`✓ Parsed: ${parsedItems.join(' • ')}`);
+      setLastParsedSummary(`✓ Understood: ${parsedItems.join(' • ')}`);
+      playChime('success');
     } else {
-      setLastParsedSummary(`✓ Answer received: "${clean.slice(0, 32)}..."`);
+      setLastParsedSummary(`Captured: "${clean.slice(0, 45)}..."`);
     }
   };
 
-  const handleUseSampleAnswer = (sample: string) => {
-    parseSpokenTextForStep(sample, currentStep, true);
+  // Quick Sample Answer Click
+  const handleUseSampleAnswer = (sampleText: string) => {
+    primeSpeechSynthesis();
+    parseSpokenTextForStep(sampleText, currentStep, true);
   };
 
-  // Robust Speech Recognition
-  const toggleSpeechRecognition = async () => {
-    if (!isSpeechRecognitionSupported()) {
-      setRecErrorMsg('Web Speech Recognition is not supported by your browser. Click any Quick Voice Answer below or type manually.');
-      return;
-    }
+  // Add Photo Captured via Camera
+  const handleAddCapturedPhoto = (newPhoto: GeoPhoto) => {
+    setFormData(prev => ({
+      ...prev,
+      photos: [newPhoto, ...prev.photos]
+    }));
+    setLastParsedSummary(`✓ Photo Added: ${newPhoto.caption}`);
+  };
 
-    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  // Remove Photo
+  const handleRemovePhoto = (indexToRemove: number) => {
+    setFormData(prev => ({
+      ...prev,
+      photos: prev.photos.filter((_, idx) => idx !== indexToRemove)
+    }));
+  };
+
+  // Quick File Upload Geotagger
+  const handleQuickFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const width = img.naturalWidth || 1280;
+        const height = img.naturalHeight || 720;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Burn official geotag
+          const bannerHeight = Math.max(85, Math.floor(height * 0.16));
+          const grad = ctx.createLinearGradient(0, height - bannerHeight, 0, height);
+          grad.addColorStop(0, 'rgba(5, 10, 25, 0.88)');
+          grad.addColorStop(1, 'rgba(2, 6, 18, 0.98)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, height - bannerHeight, width, bannerHeight);
+
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = Math.max(2, Math.floor(height * 0.005));
+          ctx.beginPath();
+          ctx.moveTo(0, height - bannerHeight);
+          ctx.lineTo(width, height - bannerHeight);
+          ctx.stroke();
+
+          const baseFontSize = Math.max(12, Math.floor(width * 0.022));
+          ctx.fillStyle = '#34d399';
+          ctx.font = `bold ${baseFontSize + 2}px monospace`;
+          ctx.fillText(`📍 LAT: ${formData.latitude.toFixed(5)}°N   LON: ${formData.longitude.toFixed(5)}°E`, 20, height - bannerHeight + 14);
+
+          ctx.font = `bold ${baseFontSize}px sans-serif`;
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(`SURVEY #${formData.surveyNumber}  |  DIGIPIN: ${formData.digipin}`, 20, height - bannerHeight + 14 + baseFontSize * 1.5);
+
+          ctx.font = `normal ${baseFontSize - 1}px sans-serif`;
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillText(`${formData.village}, ${formData.district} • ${new Date().toISOString().replace('T', ' ').slice(0, 19)} IST`, 20, height - bannerHeight + 14 + baseFontSize * 2.8);
+
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = `bold ${baseFontSize + 1}px sans-serif`;
+          ctx.fillText('✓ KISANCLAIM CADASTRAL GEOTAG', width - 20, height - bannerHeight + 14);
+
+          const stampedUrl = canvas.toDataURL('image/jpeg', 0.92);
+          const newPhoto: GeoPhoto = {
+            photo_url: stampedUrl,
+            photo_type: 'damaged_crop',
+            timestamp: new Date().toISOString(),
+            latitude: formData.latitude,
+            longitude: formData.longitude,
+            caption: `Uploaded Evidence - Survey ${formData.surveyNumber}`
+          };
+          handleAddCapturedPhoto(newPhoto);
+          playChime('success');
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Web Speech Recognition
+  const toggleSpeechRecognition = () => {
+    primeSpeechSynthesis();
 
     if (isListening) {
       if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch (e) {
-          // ignore
-        }
+        recognitionRef.current.stop();
       }
       setIsListening(false);
       return;
     }
 
     setRecErrorMsg(null);
-    setSpokenTranscript('Listening to your microphone...');
+    setSpokenTranscript('');
 
-    // Request mic permission proactively to prevent silent failures
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(t => t.stop());
-      }
-    } catch (e) {
-      console.warn('Microphone permission check note:', e);
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      setRecErrorMsg('Speech Recognition not supported in this browser. Please use Quick Voice Answers below.');
+      return;
     }
 
     try {
       const rec = new SpeechRec();
-      rec.continuous = true;
+      rec.continuous = false;
       rec.interimResults = true;
-      rec.maxAlternatives = 1;
       rec.lang = language === 'kn' ? 'kn-IN' : 'en-IN';
 
       rec.onstart = () => {
@@ -439,30 +579,28 @@ export const VoiceAssistantModal: React.FC<Props> = ({
         setRecErrorMsg(null);
       };
 
-      rec.onresult = (event: any) => {
-        const results = Array.from(event.results);
-        const transcriptText = results
-          .map((r: any) => r[0].transcript)
-          .join('');
-        if (transcriptText) {
-          setSpokenTranscript(transcriptText);
-          parseSpokenTextForStep(transcriptText, currentStep);
+      rec.onresult = (evt: any) => {
+        let finalTrans = '';
+        for (let i = evt.resultIndex; i < evt.results.length; ++i) {
+          if (evt.results[i].isFinal) {
+            finalTrans += evt.results[i][0].transcript;
+          }
+        }
+        if (finalTrans) {
+          parseSpokenTextForStep(finalTrans, currentStep);
+        } else if (evt.results[0] && evt.results[0][0]) {
+          setSpokenTranscript(evt.results[0][0].transcript);
         }
       };
 
-      rec.onerror = (event: any) => {
-        const err = event.error;
-        console.warn('Speech Recognition error:', err);
-        if (err === 'no-speech') {
-          setRecErrorMsg('No speech heard yet. Speak into your microphone or try the quick voice samples.');
-        } else if (err === 'network') {
-          setRecErrorMsg('Google speech service connection timed out. Click any Quick Voice Answer below to test instantly.');
-        } else if (err === 'not-allowed') {
-          setRecErrorMsg('Microphone blocked. Please allow microphone in browser URL settings, or click a preset.');
-        } else {
-          setRecErrorMsg(`Mic status: ${err}. You can click any Quick Voice Answer below.`);
-        }
+      rec.onerror = (evt: any) => {
+        console.warn('Speech rec error:', evt.error);
         setIsListening(false);
+        if (evt.error === 'not-allowed') {
+          setRecErrorMsg('Microphone access denied. Please click any Quick Voice Answer below.');
+        } else if (evt.error === 'no-speech') {
+          setRecErrorMsg('No speech detected. Please speak clearly or select a Quick Voice Answer.');
+        }
       };
 
       rec.onend = () => {
@@ -482,7 +620,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     if (currentStep < 6) {
       setCurrentStep(prev => prev + 1);
     } else {
-      // Complete
+      // Complete claim report
       onComplete(formData);
     }
   };
@@ -494,13 +632,14 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-xl">
-      <div className="relative w-full max-w-3xl bg-slate-900/95 border border-emerald-500/50 rounded-3xl shadow-[0_25px_60px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col max-h-[92vh] backdrop-blur-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+      <div className="relative w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[94vh]">
+        
         {/* Top Header */}
-        <div className="p-4.5 bg-slate-900/95 border-b border-white/[0.08] flex items-center justify-between">
+        <div className="p-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {/* Animated Avatar */}
-            <div className="relative flex items-center justify-center w-11 h-11 rounded-full bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-400 text-white shadow-xl shadow-emerald-500/35 ring-2 ring-emerald-400/50">
+            <div className="relative flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-600 text-white shadow-md">
               <span className="text-xl">🤖</span>
               {isSpeaking && (
                 <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
@@ -511,14 +650,14 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold bg-gradient-to-r from-white via-emerald-100 to-teal-200 bg-clip-text text-transparent">
+                <h2 className="text-base font-bold text-white">
                   KisanClaim Voice Assistant
                 </h2>
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.25)]">
-                  AI Guided Mode
+                <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-mono font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  AI GUIDED MODE
                 </span>
               </div>
-              <p className="text-xs text-slate-300/80">Step {currentStep} of 6 • Natural voice guidance</p>
+              <p className="text-xs text-slate-400">Step {currentStep} of 6 • Natural voice guidance & live photo evidence</p>
             </div>
           </div>
 
@@ -528,68 +667,74 @@ export const VoiceAssistantModal: React.FC<Props> = ({
                 setVoiceEnabled(!voiceEnabled);
                 if (voiceEnabled) stopSpeaking();
               }}
-              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
+              className="p-2 text-slate-400 hover:text-emerald-400 rounded-xl hover:bg-slate-800 transition cursor-pointer"
               title="Toggle audio narration"
             >
               {voiceEnabled ? <Volume2 className="w-5 h-5 text-emerald-400" /> : <VolumeX className="w-5 h-5" />}
             </button>
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
+              className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Progress Bar with Glowing Accent */}
-        <div className="w-full bg-slate-950 h-2 overflow-hidden border-b border-slate-800">
+        {/* Progress Bar */}
+        <div className="w-full bg-slate-950 h-1.5 overflow-hidden border-b border-slate-800">
           <div
-            className="bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 h-full transition-all duration-500 shadow-[0_0_12px_rgba(16,185,129,0.6)]"
+            className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full transition-all duration-300"
             style={{ width: `${(currentStep / 6) * 100}%` }}
           />
         </div>
 
-        {/* Question Bubble & Audio Waves */}
-        <div className="p-6 bg-slate-900/90 border-b border-slate-800/80 flex items-start gap-4">
-          <div className="p-4 bg-gradient-to-r from-emerald-950/80 via-teal-950/60 to-slate-900 border border-emerald-500/40 rounded-2xl flex-1 shadow-lg shadow-emerald-950/40">
-            <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400 block mb-1">
+        {/* Question Bubble & Listen / Audio Waves Button */}
+        <div className="p-4 sm:p-5 bg-slate-950/70 border-b border-slate-800 flex items-start gap-3 sm:gap-4">
+          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex-1 shadow-md">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 block mb-1 font-mono">
               {currentQ.title}
             </span>
-            <p className="text-base font-bold text-white leading-relaxed">
+            <p className="text-sm sm:text-base font-bold text-white leading-relaxed">
               "{language === 'kn' ? currentQ.questionKn : currentQ.questionEn}"
             </p>
-            <p className="text-xs text-emerald-300/80 mt-2 flex items-center gap-1.5 font-medium">
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400" /> {currentQ.subtext}
+            <p className="text-xs text-slate-400 mt-2 flex items-center gap-1.5 font-medium">
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" /> {currentQ.subtext}
             </p>
           </div>
 
           {/* Repeat / Listen Question Button */}
           <button
+            type="button"
             onClick={toggleSpeakQuestion}
-            className={`p-3 rounded-xl transition flex flex-col items-center gap-1 text-[10px] font-bold cursor-pointer ${
+            className={`px-3.5 py-3 rounded-2xl transition-all flex flex-col items-center justify-center gap-1.5 text-xs font-bold cursor-pointer shadow-md ${
               isSpeaking
-                ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
-                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                ? 'bg-emerald-500/20 text-emerald-300 border-2 border-emerald-500 animate-pulse'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
             }`}
-            title={isSpeaking ? 'Stop Audio' : 'Hear Question Read Aloud'}
+            title={isSpeaking ? 'Click to Stop Speaking' : 'Click to Listen to Question'}
           >
             {isSpeaking ? (
               <>
-                <VolumeX className="w-4 h-4 text-red-400" />
-                <span>Stop</span>
+                <div className="flex items-center gap-1 h-4">
+                  <span className="w-1 h-3 bg-emerald-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                  <span className="w-1 h-4 bg-emerald-300 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                  <span className="w-1 h-2.5 bg-emerald-400 rounded-full animate-bounce" />
+                </div>
+                <span className="text-[10px] text-emerald-300 font-extrabold uppercase whitespace-nowrap font-mono">Speaking</span>
               </>
             ) : (
               <>
-                <Volume2 className="w-4 h-4 text-emerald-400" />
-                <span>Listen</span>
+                <Volume2 className="w-5 h-5 text-emerald-400" />
+                <span className="text-[10px] text-slate-300 font-bold uppercase whitespace-nowrap">Listen</span>
               </>
             )}
           </button>
         </div>
 
         {/* Interactive Form Content Area based on Step */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+          
           {/* STEP 1: Farmer Identification */}
           {currentStep === 1 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -640,280 +785,168 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             </div>
           )}
 
-          {/* STEP 2: Land Identification & GPS */}
+          {/* STEP 2: Land Identification & GPS Auto-Fetch / Manual Mode */}
           {currentStep === 2 && (
             <div className="space-y-4">
-              {/* Location Mode Switcher: Auto-Fetch vs Manual Coordinates */}
-              <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 shadow-md">
-                <button
-                  type="button"
-                  onClick={() => setLocationMode('autofetch')}
-                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
-                    locationMode === 'autofetch'
-                      ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-600/30'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Navigation className="w-4 h-4 text-emerald-300" />
-                  <span>Option 1: Auto-Fetch GPS Location</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setLocationMode('manual')}
-                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
-                    locationMode === 'manual'
-                      ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg shadow-blue-600/30'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Edit3 className="w-4 h-4 text-cyan-300" />
-                  <span>Option 2: Enter Coordinates Manually</span>
-                </button>
-              </div>
-
-              {/* Status Notice */}
-              <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
-                <span className="text-slate-300 font-mono flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                  {locationStatus}
-                </span>
-                <span className="text-[10px] font-mono text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/30">
-                  DIGIPIN: {formData.digipin}
-                </span>
-              </div>
-
-              {/* Option 1 View: Auto-Fetch */}
-              {locationMode === 'autofetch' ? (
-                <div className="p-4 bg-emerald-950/20 border border-emerald-500/30 rounded-2xl space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-bold text-white flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-emerald-400" />
-                        <span>High-Precision Device GPS Centroid</span>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        Reads browser device sensors and locks cadastral coordinates directly.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={isLocating}
-                      onClick={handleAutoFetchLocation}
-                      className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-600/20 flex items-center gap-2 transition cursor-pointer"
-                    >
-                      {isLocating ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                          <span>Detecting GPS...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Navigation className="w-4 h-4 text-white" />
-                          <span>Auto-Fetch My GPS Location</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-emerald-500/20 text-xs">
-                    <div className="p-2 bg-slate-950 rounded-lg">
-                      <span className="text-[10px] text-slate-400 block">Latitude</span>
-                      <strong className="text-white font-mono">{formData.latitude.toFixed(4)}° N</strong>
-                    </div>
-                    <div className="p-2 bg-slate-950 rounded-lg">
-                      <span className="text-[10px] text-slate-400 block">Longitude</span>
-                      <strong className="text-white font-mono">{formData.longitude.toFixed(4)}° E</strong>
-                    </div>
-                    <div className="p-2 bg-slate-950 rounded-lg">
-                      <span className="text-[10px] text-slate-400 block">Survey #</span>
-                      <strong className="text-white font-mono">{formData.surveyNumber}</strong>
-                    </div>
-                    <div className="p-2 bg-slate-950 rounded-lg">
-                      <span className="text-[10px] text-slate-400 block">Area</span>
-                      <strong className="text-emerald-400 font-mono">{formData.landAreaAcres} Acres</strong>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                /* Option 2 View: Manual Latitude and Longitude Entry */
-                <div className="p-4 bg-blue-950/20 border border-blue-500/30 rounded-2xl space-y-4">
-                  <div className="text-xs font-bold text-white flex items-center gap-2">
-                    <Edit3 className="w-4 h-4 text-cyan-400" />
-                    <span>Enter Exact Cadastral Latitude, Longitude & Survey Details</span>
-                  </div>
-
-                  {/* Quick Preset Buttons */}
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold mr-1">Quick Presets:</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleManualCoordChange('latitude', 13.2456);
-                        handleManualCoordChange('longitude', 77.7123);
-                        setFormData(prev => ({
-                          ...prev,
-                          village: 'Devanahalli',
-                          district: 'Bengaluru Rural',
-                          surveyNumber: '125/2',
-                          latitude: 13.2456,
-                          longitude: 77.7123,
-                          digipin: encodeDigipin(13.2456, 77.7123)
-                        }));
-                      }}
-                      className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg text-[10px] border border-slate-700 transition cursor-pointer"
-                    >
-                      🌱 Devanahalli (13.2456, 77.7123)
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleManualCoordChange('latitude', 13.0722);
-                        handleManualCoordChange('longitude', 77.7981);
-                        setFormData(prev => ({
-                          ...prev,
-                          village: 'Hosakote',
-                          district: 'Bengaluru Rural',
-                          surveyNumber: '88/1',
-                          latitude: 13.0722,
-                          longitude: 77.7981,
-                          digipin: encodeDigipin(13.0722, 77.7981)
-                        }));
-                      }}
-                      className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg text-[10px] border border-slate-700 transition cursor-pointer"
-                    >
-                      🚨 Hosakote (13.0722, 77.7981)
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleManualCoordChange('latitude', 15.8497);
-                        handleManualCoordChange('longitude', 74.4977);
-                        setFormData(prev => ({
-                          ...prev,
-                          village: 'Chikodi',
-                          district: 'Belagavi',
-                          surveyNumber: '44/B',
-                          latitude: 15.8497,
-                          longitude: 74.4977,
-                          digipin: encodeDigipin(15.8497, 74.4977)
-                        }));
-                      }}
-                      className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg text-[10px] border border-slate-700 transition cursor-pointer"
-                    >
-                      🌾 Belagavi (15.8497, 74.4977)
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">Latitude (°N)</label>
-                      <input
-                        type="number"
-                        step="0.0001"
-                        value={formData.latitude}
-                        onChange={e => handleManualCoordChange('latitude', parseFloat(e.target.value) || 0)}
-                        placeholder="13.2456"
-                        className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-500 rounded-xl px-3 py-2 text-white font-mono text-sm outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">Longitude (°E)</label>
-                      <input
-                        type="number"
-                        step="0.0001"
-                        value={formData.longitude}
-                        onChange={e => handleManualCoordChange('longitude', parseFloat(e.target.value) || 0)}
-                        placeholder="77.7123"
-                        className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-500 rounded-xl px-3 py-2 text-white font-mono text-sm outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">Survey Number</label>
-                      <input
-                        type="text"
-                        value={formData.surveyNumber}
-                        onChange={e => setFormData({ ...formData, surveyNumber: e.target.value })}
-                        placeholder="125/2"
-                        className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-500 rounded-xl px-3 py-2 text-white text-sm outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">Land Area (Acres)</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={formData.landAreaAcres}
-                        onChange={e => setFormData({ ...formData, landAreaAcres: parseFloat(e.target.value) || 2.5 })}
-                        placeholder="2.5"
-                        className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-500 rounded-xl px-3 py-2 text-white text-sm outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Dynamic Google Earth Satellite Locator Window */}
-              <div className="rounded-2xl border border-slate-700/80 overflow-hidden bg-slate-950">
-                <div className="p-3 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <Globe className="w-4 h-4 text-cyan-400" />
-                    <span className="font-bold text-white">Google Earth Satellite Parcel Demarcation</span>
-                    <span className="text-[10px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded font-mono">
-                      LIVE TILES
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, latitude: 13.2457, longitude: 77.7122 })}
-                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] rounded-lg flex items-center gap-1 cursor-pointer transition"
-                      title="Recenter GPS"
-                    >
-                      <RefreshCw className="w-3 h-3 text-cyan-400" />
-                      <span>Recenter</span>
-                    </button>
-
-                    <a
-                      href={`https://earth.google.com/web/@${formData.latitude},${formData.longitude},950a,35d,35y,0h,0t,0r`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold rounded-lg flex items-center gap-1 transition"
-                    >
-                      <span>3D Earth</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                </div>
-
-                <div className="relative w-full h-44 bg-slate-950">
-                  <iframe
-                    title="Google Earth Farm Locator"
-                    src={`https://maps.google.com/maps?q=${formData.latitude},${formData.longitude}&t=k&z=17&ie=UTF8&iwloc=&output=embed`}
-                    className="w-full h-full border-0 filter contrast-105 brightness-95"
-                    loading="lazy"
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Survey Number</label>
+                  <input
+                    type="text"
+                    value={formData.surveyNumber}
+                    onChange={e => setFormData({ ...formData, surveyNumber: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white text-sm font-mono"
                   />
-                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                    <div className="w-24 h-20 border-2 border-emerald-400 bg-emerald-500/15 rounded-xl shadow-lg flex flex-col items-center justify-center">
-                      <span className="text-[9px] font-bold text-white bg-slate-950/80 px-1.5 py-0.5 rounded">
-                        Survey #{formData.surveyNumber}
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Land Area (Acres)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={formData.landAreaAcres}
+                    onChange={e => setFormData({ ...formData, landAreaAcres: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white text-sm font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">DIGIPIN (National Grid)</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={formData.digipin}
+                    className="w-full bg-slate-950/80 border border-cyan-500/40 rounded-xl px-3.5 py-2 text-cyan-300 text-sm font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Location Mode Choice */}
+              <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <MapPin className="w-4 h-4 text-emerald-400" />
+                    Parcel Geolocation & Land Plot Boundary Setup
+                  </span>
+                  
+                  {/* Three Options Toggle Buttons */}
+                  <div className="flex flex-wrap items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setLocationMode('map')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        locationMode === 'map'
+                          ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Globe className="w-3.5 h-3.5" />
+                      <span>Option 1: Satellite Plot Selector</span>
+                      <span className="text-[9px] bg-emerald-400/30 text-emerald-100 px-1.5 py-0.2 rounded font-mono">
+                        Interactive
                       </span>
-                      <span className="text-[8px] text-emerald-300 font-mono mt-0.5">
-                        {formData.landAreaAcres} ac
-                      </span>
-                    </div>
-                  </div>
-                  <div className="absolute bottom-2 left-2 bg-slate-950/80 text-[10px] text-slate-300 px-2 py-0.5 rounded font-mono">
-                    Google Earth 3D Centroid: {formData.latitude.toFixed(4)}°N, {formData.longitude.toFixed(4)}°E
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setLocationMode('autofetch')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        locationMode === 'autofetch'
+                          ? 'bg-emerald-600 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Navigation className="w-3 h-3" />
+                      <span>Option 2: Auto-Fetch GPS</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setLocationMode('manual')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        locationMode === 'manual'
+                          ? 'bg-cyan-600 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>Option 3: Enter Lat/Long</span>
+                    </button>
                   </div>
                 </div>
+
+                {/* Sub-panel 1: Interactive Satellite Land Plot Selector */}
+                {locationMode === 'map' && (
+                  <div className="space-y-2">
+                    <LandPlotMapSelector
+                      initialCenterLat={formData.latitude}
+                      initialCenterLon={formData.longitude}
+                      initialCoords={formData.polygonCoordinates}
+                      surveyNumber={formData.surveyNumber}
+                      onPlotChange={handlePlotChange}
+                    />
+                  </div>
+                )}
+
+                {/* Sub-panel 2: Auto Fetch Location */}
+                {locationMode === 'autofetch' && (
+                  <div className="p-3.5 bg-slate-900 rounded-xl border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span>Device & Cadastral GPS Synchronizer</span>
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-mono">
+                          ACCURACY: ±3.2m
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        {locationStatus}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleAutoFetchLocation}
+                      disabled={isLocating}
+                      className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 disabled:bg-slate-800 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-md cursor-pointer"
+                    >
+                      <Navigation className={`w-3.5 h-3.5 ${isLocating ? 'animate-spin' : ''}`} />
+                      <span>{isLocating ? 'Locking Coordinates...' : 'Auto-Fetch Location Now'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Sub-panel 3: Manual Latitude & Longitude Input */}
+                {locationMode === 'manual' && (
+                  <div className="p-3.5 bg-slate-900 rounded-xl border border-cyan-500/30 space-y-3">
+                    <div className="text-xs text-cyan-300 font-medium">
+                      Enter the geodetic centroid coordinates for your land parcel. DIGIPIN will be computed dynamically.
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                          Latitude (°N, e.g. 13.2456)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={formData.latitude}
+                          onChange={e => handleManualCoordChange('latitude', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-sm focus:border-cyan-400 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                          Longitude (°E, e.g. 77.7123)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={formData.longitude}
+                          onChange={e => handleManualCoordChange('longitude', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-sm focus:border-cyan-400 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -921,46 +954,48 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           {/* STEP 3: Crop Details */}
           {currentStep === 3 && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {['Ragi', 'Paddy', 'Cotton', 'Sugarcane', 'Wheat', 'Onion', 'Maize', 'Soybean'].map(c => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setFormData({ ...formData, cropName: c })}
-                    className={`p-3 rounded-xl border text-sm font-semibold transition ${
-                      formData.cropName === c
-                        ? 'bg-emerald-600 border-emerald-400 text-white shadow-lg'
-                        : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-600'
-                    }`}
-                  >
-                    🌱 {c}
-                  </button>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Crop Growth Stage</label>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Crop Sown</label>
                   <select
-                    value={formData.growthStage}
-                    onChange={e => setFormData({ ...formData, growthStage: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white text-sm outline-none"
+                    value={formData.cropName}
+                    onChange={e => setFormData({ ...formData, cropName: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm"
                   >
-                    <option value="Newly sown">Newly sown</option>
-                    <option value="Vegetative stage">Vegetative stage</option>
-                    <option value="Flowering stage">Flowering stage</option>
-                    <option value="Fruiting stage">Fruiting stage</option>
-                    <option value="Near harvest">Near harvest</option>
-                    <option value="I don't know">I don't know</option>
+                    {['Ragi', 'Paddy', 'Cotton', 'Sugarcane', 'Wheat', 'Onion', 'Maize', 'Soybean'].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">PMFBY Application # (Optional)</label>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Crop Variety</label>
                   <input
                     type="text"
-                    value={formData.applicationNumber}
-                    onChange={e => setFormData({ ...formData, applicationNumber: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm"
+                    value={formData.variety}
+                    onChange={e => setFormData({ ...formData, variety: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Growth Stage at Loss</label>
+                  <select
+                    value={formData.growthStage}
+                    onChange={e => setFormData({ ...formData, growthStage: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm"
+                  >
+                    <option value="Vegetative stage">Vegetative stage (Active Tillering)</option>
+                    <option value="Flowering stage">Flowering stage (Reproductive)</option>
+                    <option value="Grain filling stage">Grain filling stage</option>
+                    <option value="Maturity stage">Maturity stage</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Approximate Sowing Date</label>
+                  <input
+                    type="date"
+                    value={formData.sowingDate}
+                    onChange={e => setFormData({ ...formData, sowingDate: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm"
                   />
                 </div>
               </div>
@@ -970,25 +1005,21 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           {/* STEP 4: Disaster Details */}
           {currentStep === 4 && (
             <div className="space-y-4">
-              <label className="text-xs font-semibold text-slate-300 block">Select Natural Disaster Type</label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {['Flood', 'Heavy rainfall', 'Drought', 'Cyclone', 'Hailstorm', 'Landslide', 'Pest attack', 'Other'].map(d => (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => setFormData({ ...formData, disasterType: d })}
-                    className={`p-2.5 rounded-xl border text-xs font-semibold transition ${
-                      formData.disasterType === d
-                        ? 'bg-red-600 border-red-400 text-white shadow-lg'
-                        : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-600'
-                    }`}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Disaster Type</label>
+                  <select
+                    value={formData.disasterType}
+                    onChange={e => setFormData({ ...formData, disasterType: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm"
                   >
-                    {d}
-                  </button>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <option value="Flood">Flood / Inundation</option>
+                    <option value="Drought">Drought / Dry Spell</option>
+                    <option value="Cyclone">Cyclone / Gale Wind</option>
+                    <option value="Hailstorm">Hailstorm</option>
+                    <option value="Pest Attack">Pest / Disease Attack</option>
+                  </select>
+                </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-300 block mb-1">Disaster Date</label>
                   <input
@@ -999,23 +1030,24 @@ export const VoiceAssistantModal: React.FC<Props> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Damage Percentage ({formData.damagePercentage}%)</label>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">
+                    Damage Percentage: <span className="text-emerald-400 font-bold font-mono">{formData.damagePercentage}%</span>
+                  </label>
                   <input
                     type="range"
                     min="10"
                     max="100"
-                    step="5"
                     value={formData.damagePercentage}
-                    onChange={e => setFormData({ ...formData, damagePercentage: parseInt(e.target.value) })}
-                    className="w-full accent-emerald-500"
+                    onChange={e => setFormData({ ...formData, damagePercentage: parseInt(e.target.value, 10) })}
+                    className="w-full accent-emerald-500 cursor-pointer mt-2"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Describe in your own words (or speak via microphone)</label>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">Farmer Narrative / Details</label>
                 <textarea
-                  rows={2}
+                  rows={3}
                   value={formData.description}
                   onChange={e => setFormData({ ...formData, description: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-white text-xs outline-none"
@@ -1045,21 +1077,135 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             </div>
           )}
 
-          {/* STEP 6: Photo Evidence */}
+          {/* STEP 6: Photo Evidence with Live Geotag Camera */}
           {currentStep === 6 && (
-            <div className="space-y-3">
-              <div className="text-xs text-slate-300">
-                Ground photographs captured with verified camera timestamps and geodetic tags:
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {formData.photos.map((p, idx) => (
-                  <div key={idx} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-center">
-                    <img src={p.photo_url} alt="Crop Evidence" className="w-full h-24 object-cover rounded-lg mb-2" />
-                    <span className="text-xs font-bold text-white block capitalize">{p.caption}</span>
-                    <span className="text-[10px] text-emerald-400 font-mono block">✓ GPS: {p.latitude.toFixed(4)}°N</span>
-                    <span className="text-[9px] text-slate-500 block">EXIF: {p.timestamp.replace('T', ' ')}</span>
+            <div className="space-y-4">
+              {/* Top Banner & Trigger Buttons */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/60 via-teal-950/40 to-slate-900 border border-emerald-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] font-bold">
+                      EXIF GEOTAG ENGINE
+                    </span>
+                    <span className="text-xs font-mono text-cyan-300">
+                      📍 {formData.latitude.toFixed(4)}°N, {formData.longitude.toFixed(4)}°E
+                    </span>
                   </div>
-                ))}
+                  <h4 className="text-sm font-bold text-white mt-1">
+                    Capture or Upload Ground Evidence Photos
+                  </h4>
+                  <p className="text-xs text-slate-300/80 mt-0.5">
+                    Images captured through the website camera automatically burn verified GPS coordinates, DIGIPIN (<span className="font-mono text-cyan-300">{formData.digipin}</span>), and Survey #{formData.surveyNumber} into image pixels.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Website Camera Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowCameraModal(true)}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/30 transition transform hover:-translate-y-0.5 cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4 text-white" />
+                    <span>📸 Open Website Camera</span>
+                  </button>
+
+                  {/* Upload file fallback button */}
+                  <label className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer">
+                    <Upload className="w-4 h-4 text-slate-300" />
+                    <span>Upload File</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleQuickFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Photos Grid */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-400 px-1 font-mono">
+                  <span>Attached Evidence Photos ({formData.photos.length}):</span>
+                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> All Geo-Tags Synchronized
+                  </span>
+                </div>
+
+                {formData.photos.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-950/80 rounded-2xl border border-dashed border-slate-800 space-y-3">
+                    <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                      <Camera className="w-6 h-6" />
+                    </div>
+                    <div className="text-sm font-semibold text-white">No photos captured yet</div>
+                    <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                      Click "Open Website Camera" to take live photos of the damaged crop, flood water, or field boundary.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowCameraModal(true)}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-lg shadow-emerald-600/25"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Take First Photo Now</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {formData.photos.map((p, idx) => (
+                      <div
+                        key={idx}
+                        className="group relative bg-slate-950 p-2.5 rounded-2xl border border-slate-800 hover:border-slate-700 transition-all shadow-md flex flex-col justify-between"
+                      >
+                        <div className="relative overflow-hidden rounded-xl bg-black aspect-video mb-2">
+                          <img
+                            src={p.photo_url}
+                            alt="Crop Evidence"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/85 backdrop-blur-sm text-[10px] font-bold text-white uppercase tracking-wider border border-slate-700 font-mono">
+                            {p.photo_type.replace('_', ' ')}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPreviewPhoto(p)}
+                            className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/85 hover:bg-black text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer border border-slate-700"
+                            title="View Full Size"
+                          >
+                            <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                          </button>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-xs font-bold text-white block capitalize truncate">
+                            {p.caption}
+                          </span>
+                          <div className="flex items-center justify-between text-[10px] text-emerald-400 font-mono">
+                            <span>✓ {p.latitude.toFixed(4)}°N, {p.longitude.toFixed(4)}°E</span>
+                          </div>
+                          <span className="text-[9px] text-slate-500 block font-mono">
+                            {p.timestamp.replace('T', ' ').slice(0, 19)}
+                          </span>
+                        </div>
+
+                        <div className="mt-2.5 pt-2 border-t border-slate-800 flex items-center justify-between">
+                          <span className="text-[9px] text-slate-400 font-mono">
+                            Survey #{formData.surveyNumber}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePhoto(idx)}
+                            className="text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1 font-semibold cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" /> Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1067,8 +1213,8 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
         {/* Quick Voice Answers Strip for Current Step */}
         {currentStep <= 5 && sampleAnswersForStep[currentStep] && (
-          <div className="px-4 py-2 bg-slate-900/95 border-t border-slate-800 flex items-center gap-2 overflow-x-auto text-xs no-scrollbar">
-            <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
+          <div className="px-4 py-2 bg-slate-950 border-t border-slate-800 flex items-center gap-2 overflow-x-auto text-xs no-scrollbar">
+            <span className="text-[10px] text-cyan-400 font-mono font-bold uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
               <Sparkles className="w-3 h-3 text-cyan-400" /> Quick Voice Answers:
             </span>
             {sampleAnswersForStep[currentStep].map((sample, idx) => (
@@ -1076,10 +1222,10 @@ export const VoiceAssistantModal: React.FC<Props> = ({
                 key={idx}
                 type="button"
                 onClick={() => handleUseSampleAnswer(sample)}
-                className="px-2.5 py-1 rounded-xl bg-slate-800/90 hover:bg-emerald-950/80 hover:border-emerald-500/60 text-slate-300 hover:text-white border border-slate-700/80 whitespace-nowrap text-[11px] transition flex items-center gap-1.5 cursor-pointer shadow-sm group"
+                className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 hover:border-cyan-500/50 text-slate-300 hover:text-white border border-slate-800 whitespace-nowrap text-[11px] transition flex items-center gap-1.5 cursor-pointer shadow-sm group"
                 title="Click to simulate speaking this answer"
               >
-                <Mic className="w-3 h-3 text-emerald-400 group-hover:scale-110 transition-transform" />
+                <Mic className="w-3 h-3 text-cyan-400 group-hover:scale-110 transition-transform" />
                 <span>"{sample}"</span>
               </button>
             ))}
@@ -1092,9 +1238,9 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             {/* Microphone Button */}
             <button
               onClick={toggleSpeechRecognition}
-              className={`px-3.5 py-2.5 rounded-2xl font-bold flex items-center gap-2 text-xs transition-all cursor-pointer ${
+              className={`px-4 py-2.5 rounded-2xl font-bold flex items-center gap-2 text-xs transition-all cursor-pointer ${
                 isListening
-                  ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40 ring-2 ring-red-400'
+                  ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/50 ring-2 ring-red-400'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30'
               }`}
             >
@@ -1105,7 +1251,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
                 </>
               ) : (
                 <>
-                  <Mic className="w-4 h-4" />
+                  <Mic className="w-4 h-4 text-white" />
                   <span>Speak Answer</span>
                 </>
               )}
@@ -1113,7 +1259,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
             {/* Recognized or Parsed Feedback */}
             {lastParsedSummary && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs font-medium">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs font-mono font-medium shadow-sm">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
                 <span className="truncate max-w-xs">{lastParsedSummary}</span>
               </div>
@@ -1129,7 +1275,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
             {/* Spoken Transcript Live Preview */}
             {!lastParsedSummary && spokenTranscript && (
-              <span className="text-xs text-slate-300 italic truncate max-w-xs">
+              <span className="text-xs text-slate-300 italic truncate max-w-xs font-mono">
                 "{spokenTranscript}"
               </span>
             )}
@@ -1139,7 +1285,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             {currentStep > 1 && (
               <button
                 onClick={handleBack}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1 cursor-pointer"
               >
                 <ArrowLeft className="w-3.5 h-3.5" /> Back
               </button>
@@ -1154,14 +1300,71 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
             <button
               onClick={handleNext}
-              className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 cursor-pointer"
+              className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
             >
               <span>{currentStep === 6 ? 'Submit Claim & Analyze' : 'Continue'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
+
       </div>
+
+      {/* Website Camera Capture Modal with Geotag Stamping */}
+      {showCameraModal && (
+        <GeoCameraModal
+          isOpen={showCameraModal}
+          onClose={() => setShowCameraModal(false)}
+          onCapture={handleAddCapturedPhoto}
+          surveyNumber={formData.surveyNumber}
+          digipin={formData.digipin}
+          latitude={formData.latitude}
+          longitude={formData.longitude}
+          village={formData.village}
+          district={formData.district}
+        />
+      )}
+
+      {/* Fullscreen Photo Evidence Inspector Modal */}
+      {selectedPreviewPhoto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="relative max-w-3xl w-full bg-slate-900 border border-slate-700 rounded-3xl p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
+              <div className="text-xs font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>Geotagged Photo Inspection • {selectedPreviewPhoto.caption}</span>
+              </div>
+              <button
+                onClick={() => setSelectedPreviewPhoto(null)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="relative rounded-2xl overflow-hidden bg-black border border-slate-800 flex items-center justify-center">
+              <img
+                src={selectedPreviewPhoto.photo_url}
+                alt="Inspected Evidence"
+                className="max-h-[70vh] w-auto max-w-full object-contain"
+              />
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300 font-mono">
+              <span className="text-emerald-400">
+                📍 {selectedPreviewPhoto.latitude.toFixed(5)}°N, {selectedPreviewPhoto.longitude.toFixed(5)}°E
+              </span>
+              <span>
+                {selectedPreviewPhoto.timestamp.replace('T', ' ')}
+              </span>
+              <span className="text-cyan-300 font-sans font-bold capitalize">
+                Category: {selectedPreviewPhoto.photo_type.replace('_', ' ')}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

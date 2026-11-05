@@ -54,6 +54,7 @@ export const FarmerDashboard: React.FC<Props> = ({
         land_area_acres: formData.landAreaAcres,
         latitude: formData.latitude,
         longitude: formData.longitude,
+        polygon_coords: formData.polygonCoordinates,
         crop_name: formData.cropName,
         variety: formData.variety,
         sowing_date: formData.sowingDate,
@@ -68,6 +69,9 @@ export const FarmerDashboard: React.FC<Props> = ({
       });
 
       if (created) {
+        if (!created.land.polygon_geojson && formData.polygonCoordinates) {
+          created.land.polygon_geojson = formData.polygonCoordinates;
+        }
         setNewlyCreatedClaim(created);
       }
     } catch (e) {
@@ -89,9 +93,9 @@ export const FarmerDashboard: React.FC<Props> = ({
       {viewMode === 'welcome' && (
         <div className="space-y-6 animate-fadeIn">
           {/* Welcome Banner */}
-          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-950/90 via-teal-950/80 to-slate-900 border border-emerald-500/40 p-6 md:p-8 shadow-[0_20px_60px_-15px_rgba(16,185,129,0.25)] backdrop-blur-xl">
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-950 via-teal-950 to-slate-900 border border-emerald-500/30 p-6 md:p-8 shadow-2xl">
             <div className="relative z-10 max-w-3xl">
-              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold mb-3 shadow-[0_0_12px_rgba(16,185,129,0.2)]">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-semibold mb-3">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                 {language === 'kn' ? 'ಪ್ರಧಾನ ಮಂತ್ರಿ ಫಸಲ್ ಬಿಮಾ ಯೋಜನೆ ಬೆಂಬಲಿತ' : 'PMFBY Kharif 2026 AI Support Portal'}
               </div>
@@ -108,10 +112,10 @@ export const FarmerDashboard: React.FC<Props> = ({
               <div className="mt-6">
                 <button
                   onClick={() => setShowVoiceModal(true)}
-                  className="w-full p-5 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-bold shadow-[0_15px_40px_rgba(16,185,129,0.35)] flex items-center justify-between gap-4 transition-all transform hover:-translate-y-0.5 text-left cursor-pointer group border border-white/20 hover:shadow-[0_20px_50px_rgba(6,182,212,0.45)]"
+                  className="w-full p-5 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-white font-bold shadow-2xl shadow-emerald-500/30 flex items-center justify-between gap-4 transition-all transform hover:-translate-y-0.5 text-left cursor-pointer group border border-emerald-300/40"
                 >
                   <div className="flex items-center gap-4">
-                    <div className="p-3.5 bg-white/20 rounded-2xl group-hover:scale-110 transition-transform shadow-inner ring-1 ring-white/30">
+                    <div className="p-3.5 bg-white/20 rounded-2xl group-hover:scale-105 transition-transform shadow-inner">
                       <Mic className="w-7 h-7 text-white" />
                     </div>
                     <div>
@@ -126,7 +130,7 @@ export const FarmerDashboard: React.FC<Props> = ({
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 bg-emerald-800/80 group-hover:bg-emerald-700 px-4 py-2 rounded-xl text-xs font-bold transition shadow-md">
+                  <div className="flex items-center gap-2 bg-emerald-700/60 group-hover:bg-emerald-600/70 px-4 py-2 rounded-xl text-xs font-bold transition">
                     <span>{language === 'kn' ? 'ಪ್ರಾರಂಭಿಸಿ' : 'Start Report'}</span>
                     <ArrowRight className="w-4 h-4 text-white group-hover:translate-x-1 transition-transform" />
                   </div>
@@ -142,7 +146,7 @@ export const FarmerDashboard: React.FC<Props> = ({
 
           {/* SECONDARY CARD: EXISTING ACTIVE CLAIM DOSSIER (IF AVAILABLE) */}
           {activeClaim && (
-            <div className="bg-slate-900/90 rounded-3xl border border-slate-700/80 p-6 shadow-xl backdrop-blur-xl hover:border-emerald-500/40 transition">
+            <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-6 shadow-xl backdrop-blur-md">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -164,10 +168,10 @@ export const FarmerDashboard: React.FC<Props> = ({
                 <div className="flex items-center gap-3">
                   <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs ${
                     activeClaim.current_status === 'Approved'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                       : activeClaim.current_status === 'Flagged Fraud' || activeClaim.current_status === 'Rejected'
-                      ? 'bg-red-500/30 text-red-200 border border-red-500/60 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.3)]'
-                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.2)]'
+                      ? 'bg-red-500/30 text-red-200 border border-red-500/60 animate-pulse'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                   }`}>
                     {activeClaim.current_status === 'Approved' ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -181,7 +185,7 @@ export const FarmerDashboard: React.FC<Props> = ({
 
                   <button
                     onClick={() => setViewMode('dossier')}
-                    className="px-4 py-2 bg-gradient-to-r from-cyan-950 to-blue-950 hover:from-cyan-900 hover:to-blue-900 text-cyan-300 text-xs font-bold rounded-xl border border-cyan-500/40 flex items-center gap-1.5 transition cursor-pointer shadow-md"
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold rounded-xl border border-slate-700 flex items-center gap-1.5 transition cursor-pointer"
                   >
                     <span>View Active Dossier & Twin</span>
                     <ArrowRight className="w-4 h-4 text-cyan-400" />
@@ -193,33 +197,33 @@ export const FarmerDashboard: React.FC<Props> = ({
 
           {/* 3-STEP EXPLAINER CARDS */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-5 bg-gradient-to-br from-emerald-950/30 via-slate-900/80 to-slate-900/90 rounded-2xl border border-emerald-500/30 hover:border-emerald-400/60 transition-all shadow-lg hover:shadow-[0_0_20px_rgba(16,185,129,0.2)]">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 text-white flex items-center justify-center font-bold text-lg mb-3 shadow-md shadow-emerald-500/30">
+            <div className="p-5 bg-slate-900/80 rounded-2xl border border-slate-800">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-lg mb-3">
                 1
               </div>
               <h4 className="text-sm font-bold text-white mb-1">Report with AI in 60s</h4>
-              <p className="text-xs text-slate-300/80 leading-relaxed">
+              <p className="text-xs text-slate-400 leading-relaxed">
                 Use your device GPS or enter manual Latitude & Longitude coordinates. Speak or type your crop loss details.
               </p>
             </div>
 
-            <div className="p-5 bg-gradient-to-br from-cyan-950/30 via-slate-900/80 to-slate-900/90 rounded-2xl border border-cyan-500/30 hover:border-cyan-400/60 transition-all shadow-lg hover:shadow-[0_0_20px_rgba(6,182,212,0.2)]">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-400 text-white flex items-center justify-center font-bold text-lg mb-3 shadow-md shadow-cyan-500/30">
+            <div className="p-5 bg-slate-900/80 rounded-2xl border border-slate-800">
+              <div className="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-lg mb-3">
                 2
               </div>
               <h4 className="text-sm font-bold text-white mb-1">Autonomous Satellite Audit</h4>
-              <p className="text-xs text-slate-300/80 leading-relaxed">
+              <p className="text-xs text-slate-400 leading-relaxed">
                 Sentinel-2 multispectral satellites analyze your parcel's NDVI vegetation loss and IMD weather radar cross-checks rainfall.
               </p>
             </div>
 
-            <div className="p-5 bg-gradient-to-br from-indigo-950/30 via-slate-900/80 to-slate-900/90 rounded-2xl border border-indigo-500/30 hover:border-indigo-400/60 transition-all shadow-lg hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-400 text-white flex items-center justify-center font-bold text-lg mb-3 shadow-md shadow-indigo-500/30">
+            <div className="p-5 bg-slate-900/80 rounded-2xl border border-slate-800">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-lg mb-3">
                 3
               </div>
               <h4 className="text-sm font-bold text-white mb-1">72-Hour Fast-Track Settlement</h4>
-              <p className="text-xs text-slate-300/80 leading-relaxed">
-                Transparent multi-agent adjudicator scores evidence directly against PMFBY thresholds for direct Aadhaar-linked payout.
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Automated multi-agent verified evidence dossier is sent directly to insurance adjudicators for rapid compensation.
               </p>
             </div>
           </div>
