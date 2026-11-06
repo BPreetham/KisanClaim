@@ -648,7 +648,39 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   // Quick Sample Answer Click
   const handleUseSampleAnswer = (sampleText: string) => {
     primeSpeechSynthesis();
-    parseSpokenTextForStep(sampleText, currentStep, true);
+    if (currentStep === 1) {
+      const field = activeVoiceField || 'farmerName';
+      if (field === 'farmerName') {
+        setFormData(prev => ({ ...prev, farmerName: sampleText }));
+        setLastParsedSummary(`✓ Name: ${sampleText}`);
+        playChime('success');
+      } else if (field === 'mobile') {
+        const digits = spokenToDigits(sampleText) || sampleText.replace(/\D/g, '');
+        setFormData(prev => ({ ...prev, mobile: digits }));
+        setLastParsedSummary(`✓ Mobile: ${digits}`);
+        playChime('success');
+      } else if (field === 'district') {
+        setFormData(prev => ({ ...prev, district: sampleText }));
+        setLastParsedSummary(`✓ District: ${sampleText}`);
+        playChime('success');
+      } else if (field === 'village') {
+        setFormData(prev => ({ ...prev, village: sampleText }));
+        setLastParsedSummary(`✓ Village: ${sampleText}`);
+        playChime('success');
+      }
+    } else {
+      parseSpokenTextForStep(sampleText, currentStep, true);
+    }
+  };
+
+  const getActiveSampleAnswers = (): string[] => {
+    if (currentStep === 1) {
+      if (activeVoiceField === 'mobile') return ['9876543210', '9945012345', '8877665544'];
+      if (activeVoiceField === 'district') return ['Bengaluru Rural', 'Ramanagara', 'Belagavi'];
+      if (activeVoiceField === 'village') return ['Devanahalli', 'Channapatna', 'Chikodi'];
+      return ['Ravi Kumar', 'Suresh Gowda', 'Basavaraj Patil'];
+    }
+    return sampleAnswersForStep[currentStep] || [];
   };
 
   // Add Photo Captured via Camera
@@ -740,6 +772,15 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   // Web Speech Recognition for Whole Steps (Continuous & robust)
   const toggleSpeechRecognition = () => {
     primeSpeechSynthesis();
+
+    if (currentStep === 1) {
+      if (isFieldListening) {
+        stopFieldVoiceInput();
+      } else {
+        startFieldVoiceInput(activeVoiceField || 'farmerName', true);
+      }
+      return;
+    }
 
     if (isListening) {
       if (recognitionRef.current) {
@@ -1614,12 +1655,12 @@ export const VoiceAssistantModal: React.FC<Props> = ({
         </div>
 
         {/* Quick Voice Answers Strip for Current Step */}
-        {currentStep <= 5 && sampleAnswersForStep[currentStep] && (
+        {currentStep <= 5 && (sampleAnswersForStep[currentStep] || currentStep === 1) && (
           <div className="px-4 py-2 bg-slate-950 border-t border-slate-800 flex items-center gap-2 overflow-x-auto text-xs no-scrollbar">
             <span className="text-[10px] text-cyan-400 font-mono font-bold uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
               <Sparkles className="w-3 h-3 text-cyan-400" /> Quick Voice Answers:
             </span>
-            {sampleAnswersForStep[currentStep].map((sample, idx) => (
+            {getActiveSampleAnswers().map((sample, idx) => (
               <button
                 key={idx}
                 type="button"
@@ -1641,20 +1682,24 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             <button
               onClick={toggleSpeechRecognition}
               className={`px-4 py-2.5 rounded-2xl font-bold flex items-center gap-2 text-xs transition-all cursor-pointer ${
-                isListening
+                (isListening || isFieldListening)
                   ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/50 ring-2 ring-red-400'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30'
               }`}
             >
-              {isListening ? (
+              {(isListening || isFieldListening) ? (
                 <>
                   <MicOff className="w-4 h-4 animate-bounce" />
-                  <span>Listening... (Click to Stop)</span>
+                  <span>
+                    {isFieldListening
+                      ? `Listening: ${activeVoiceField === 'farmerName' ? 'Full Name' : activeVoiceField === 'mobile' ? 'Mobile' : activeVoiceField === 'district' ? 'District' : 'Village'}... (Click to Stop)`
+                      : 'Listening... (Click to Stop)'}
+                  </span>
                 </>
               ) : (
                 <>
                   <Mic className="w-4 h-4 text-white" />
-                  <span>Speak Answer</span>
+                  <span>{currentStep === 1 ? 'Start Voice Input (1-by-1)' : 'Speak Answer'}</span>
                 </>
               )}
             </button>
