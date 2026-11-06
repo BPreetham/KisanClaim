@@ -35,7 +35,11 @@ import {
   primeSpeechSynthesis,
   playChime,
   isSpeechRecognitionSupported,
-  isSpeechSynthesisSupported
+  isSpeechSynthesisSupported,
+  cleanSpokenName,
+  spokenToDigits,
+  startFieldVoiceRecognition,
+  createFieldSpeechRecognizer
 } from '../../utils/speech';
 import { GeoCameraModal, GeoPhoto } from './GeoCameraModal';
 
@@ -59,6 +63,16 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   const [spokenTranscript, setSpokenTranscript] = useState<string>('');
   const [lastParsedSummary, setLastParsedSummary] = useState<string>('');
   const [recErrorMsg, setRecErrorMsg] = useState<string | null>(null);
+
+  // Live microphone audio wave level (0-100)
+  const [micAudioLevel, setMicAudioLevel] = useState<number>(0);
+
+  // Individual Field-by-Field Voice Input State for Step 1
+  const [activeVoiceField, setActiveVoiceField] = useState<'farmerName' | 'mobile' | 'district' | 'village' | null>(null);
+  const [isFieldListening, setIsFieldListening] = useState<boolean>(false);
+  const [fieldInterimText, setFieldInterimText] = useState<string>('');
+  const fieldRecRef = useRef<any>(null);
+  const advanceTimerRef = useRef<any>(null);
 
   // Camera & Image Preview Modals
   const [showCameraModal, setShowCameraModal] = useState<boolean>(false);
@@ -240,8 +254,184 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     if (!isOpen) {
       stopSpeaking();
       setIsSpeaking(false);
+      stopFieldVoiceInput();
     }
   }, [isOpen]);
+
+  // Stop field voice recognition helper
+  const stopFieldVoiceInput = () => {
+    stopSpeaking();
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    if (fieldRecRef.current) {
+      try {
+        if (fieldRecRef.current.abort) fieldRecRef.current.abort();
+        else fieldRecRef.current.stop();
+      } catch (e) {}
+      fieldRecRef.current = null;
+    }
+    setIsFieldListening(false);
+    setActiveVoiceField(null);
+    setFieldInterimText('');
+    setMicAudioLevel(0);
+  };
+
+  // Step 1: Sequential or single field-by-field voice input (Starts microphone immediately & streams into fields)
+  const startFieldVoiceInput = (
+    fieldName: 'farmerName' | 'mobile' | 'district' | 'village',
+    autoAdvance = false
+  ) => {
+    primeSpeechSynthesis();
+    stopSpeaking();
+    if (fieldRecRef.current) {
+      try { fieldRecRef.current.stop(); } catch (e) {}
+      fieldRecRef.current = null;
+    }
+
+    setActiveVoiceField(fieldName);
+    setIsFieldListening(true);
+    setFieldInterimText('');
+    playChime('start');
+
+    const fieldPrompts: Record<string, { enPrompt: string; knPrompt: string; label: string }> = {
+      farmerName: {
+        enPrompt: 'Please tell me your full name.',
+        knPrompt: 'ದಯವಿಟ್ಟು ನಿಮ್ಮ ಪೂರ್ಣ ಹೆಸರನ್ನು ತಿಳಿಸಿ.',
+        label: 'Full Name'
+      },
+      mobile: {
+        enPrompt: 'Please tell me your 10 digit mobile number.',
+        knPrompt: 'ದಯವಿಟ್ಟು ನಿಮ್ಮ 10 ಅಂಕಿಯ ಮೊಬೈಲ್ ಸಂಖ್ಯೆಯನ್ನು ತಿಳಿಸಿ.',
+        label: 'Mobile Number'
+      },
+      district: {
+        enPrompt: 'Which district is your farm located in?',
+        knPrompt: 'ನಿಮ್ಮ ಜಮೀನು ಯಾವ ಜಿಲ್ಲೆಯಲ್ಲಿದೆ?',
+        label: 'District'
+      },
+      village: {
+        enPrompt: 'Please tell me your village name.',
+        knPrompt: 'ದಯವಿಟ್ಟು ನಿಮ್ಮ ಊರಿನ ಹೆಸರನ್ನು ತಿಳಿಸಿ.',
+        label: 'Village'
+      }
+    };
+
+    const promptObj = fieldPrompts[fieldName];
+    const promptText = language === 'kn' ? promptObj.knPrompt : promptObj.enPrompt;
+
+    // Concurrently play prompt audio without blocking speech recognition
+    speakAloud(promptText, {
+      lang: language === 'kn' ? 'kn-IN' : 'en-IN',
+      suppressChime: true
+    });
+
+    const controller = startFieldVoiceRecognition({
+      lang: language === 'kn' ? 'kn-IN' : 'en-IN',
+      onStart: () => {
+        setIsFieldListening(true);
+        setRecErrorMsg(null);
+      },
+      onAudioLevel: (lvl) => {
+        setMicAudioLevel(lvl);
+      },
+      onInterimText: (interim) => {
+        setFieldInterimText(interim);
+        if (fieldName === 'farmerName') {
+          const cleaned = cleanSpokenName(interim);
+          if (cleaned) setFormData(prev => ({ ...prev, farmerName: cleaned }));
+        } else if (fieldName === 'mobile') {
+          const digits = spokenToDigits(interim);
+          if (digits) {
+            setFormData(prev => ({ ...prev, mobile: digits.slice(0, 10) }));
+            if (digits.length >= 10) {
+              playChime('success');
+              if (controller) controller.stop();
+              if (autoAdvance) {
+                setTimeout(() => startFieldVoiceInput('district', true), 700);
+              } else {
+                setActiveVoiceField(null);
+                setIsFieldListening(false);
+              }
+            }
+          }
+        } else if (fieldName === 'district') {
+          setFormData(prev => ({ ...prev, district: cleanSpokenName(interim) || interim }));
+        } else if (fieldName === 'village') {
+          setFormData(prev => ({ ...prev, village: cleanSpokenName(interim) || interim }));
+        }
+      },
+      onFinalText: (finalText) => {
+        setFieldInterimText('');
+        playChime('success');
+
+        if (fieldName === 'farmerName') {
+          const cleaned = cleanSpokenName(finalText) || finalText;
+          setFormData(prev => ({ ...prev, farmerName: cleaned }));
+          setLastParsedSummary(`✓ Name typed: ${cleaned}`);
+          if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+          if (autoAdvance) {
+            advanceTimerRef.current = setTimeout(() => {
+              if (controller) controller.stop();
+              startFieldVoiceInput('mobile', true);
+            }, 1400);
+          } else {
+            advanceTimerRef.current = setTimeout(() => {
+              if (controller) controller.stop();
+              setActiveVoiceField(null);
+              setIsFieldListening(false);
+            }, 1800);
+          }
+        } else if (fieldName === 'mobile') {
+          const digits = spokenToDigits(finalText);
+          const phone = digits.length >= 10 ? digits.slice(-10) : digits;
+          setFormData(prev => ({ ...prev, mobile: phone }));
+          setLastParsedSummary(`✓ Mobile typed: ${phone}`);
+          if (controller) controller.stop();
+          if (autoAdvance) {
+            setTimeout(() => startFieldVoiceInput('district', true), 700);
+          } else {
+            setActiveVoiceField(null);
+            setIsFieldListening(false);
+          }
+        } else if (fieldName === 'district') {
+          const cleaned = cleanSpokenName(finalText) || finalText;
+          setFormData(prev => ({ ...prev, district: cleaned }));
+          setLastParsedSummary(`✓ District typed: ${cleaned}`);
+          if (controller) controller.stop();
+          if (autoAdvance) {
+            setTimeout(() => startFieldVoiceInput('village', false), 700);
+          } else {
+            setActiveVoiceField(null);
+            setIsFieldListening(false);
+          }
+        } else if (fieldName === 'village') {
+          const cleaned = cleanSpokenName(finalText) || finalText;
+          setFormData(prev => ({ ...prev, village: cleaned }));
+          setLastParsedSummary(`✓ Village typed: ${cleaned}`);
+          if (controller) controller.stop();
+          setActiveVoiceField(null);
+          setIsFieldListening(false);
+          speakAloud(
+            language === 'kn'
+              ? 'ಧನ್ಯವಾದಗಳು! ನಿಮ್ಮ ಗುರುತಿನ ವಿವರಗಳು ಯಶಸ್ವಿಯಾಗಿ ದಾಖಲಾಗಿವೆ.'
+              : 'Thank you! Your identification details are recorded.',
+            { lang: language === 'kn' ? 'kn-IN' : 'en-IN' }
+          );
+        }
+      },
+      onError: (err) => {
+        console.warn('Field recognition error:', err);
+        setIsFieldListening(false);
+        if (err === 'not-allowed') {
+          setRecErrorMsg('Microphone access denied. Please click any Quick Voice Answer below or type manually.');
+        }
+      },
+      onEnd: () => {
+        setIsFieldListening(false);
+      }
+    });
+
+    fieldRecRef.current = controller;
+  };
 
   // Handle Interactive Land Plot Selector Change
   const handlePlotChange = (data: {
@@ -547,73 +737,54 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     reader.readAsDataURL(file);
   };
 
-  // Web Speech Recognition
+  // Web Speech Recognition for Whole Steps (Continuous & robust)
   const toggleSpeechRecognition = () => {
     primeSpeechSynthesis();
 
     if (isListening) {
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        try { recognitionRef.current.stop(); } catch (e) {}
+        recognitionRef.current = null;
       }
       setIsListening(false);
+      setMicAudioLevel(0);
       return;
     }
 
     setRecErrorMsg(null);
     setSpokenTranscript('');
+    setIsListening(true);
+    playChime('start');
 
-    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRec) {
-      setRecErrorMsg('Speech Recognition not supported in this browser. Please use Quick Voice Answers below.');
-      return;
-    }
-
-    try {
-      const rec = new SpeechRec();
-      rec.continuous = false;
-      rec.interimResults = true;
-      rec.lang = language === 'kn' ? 'kn-IN' : 'en-IN';
-
-      rec.onstart = () => {
+    const controller = startFieldVoiceRecognition({
+      lang: language === 'kn' ? 'kn-IN' : 'en-IN',
+      onStart: () => {
         setIsListening(true);
         setRecErrorMsg(null);
-      };
-
-      rec.onresult = (evt: any) => {
-        let finalTrans = '';
-        for (let i = evt.resultIndex; i < evt.results.length; ++i) {
-          if (evt.results[i].isFinal) {
-            finalTrans += evt.results[i][0].transcript;
-          }
-        }
-        if (finalTrans) {
-          parseSpokenTextForStep(finalTrans, currentStep);
-        } else if (evt.results[0] && evt.results[0][0]) {
-          setSpokenTranscript(evt.results[0][0].transcript);
-        }
-      };
-
-      rec.onerror = (evt: any) => {
-        console.warn('Speech rec error:', evt.error);
+      },
+      onAudioLevel: (lvl) => {
+        setMicAudioLevel(lvl);
+      },
+      onInterimText: (interim) => {
+        setSpokenTranscript(interim);
+      },
+      onFinalText: (finalTrans) => {
+        setSpokenTranscript(finalTrans);
+        parseSpokenTextForStep(finalTrans, currentStep);
+      },
+      onError: (err) => {
+        console.warn('Speech rec error:', err);
         setIsListening(false);
-        if (evt.error === 'not-allowed') {
-          setRecErrorMsg('Microphone access denied. Please click any Quick Voice Answer below.');
-        } else if (evt.error === 'no-speech') {
-          setRecErrorMsg('No speech detected. Please speak clearly or select a Quick Voice Answer.');
-        }
-      };
-
-      rec.onend = () => {
+        setMicAudioLevel(0);
+        setRecErrorMsg(typeof err === 'string' ? err : 'Unable to initialize microphone. Please click any Quick Voice Answer below.');
+      },
+      onEnd: () => {
         setIsListening(false);
-      };
+        setMicAudioLevel(0);
+      }
+    });
 
-      rec.start();
-      recognitionRef.current = rec;
-    } catch (e) {
-      console.warn('Speech Rec start error:', e);
-      setIsListening(false);
-      setRecErrorMsg('Unable to initialize microphone. Please click any Quick Voice Answer below.');
-    }
+    recognitionRef.current = controller;
   };
 
   const handleNext = () => {
@@ -737,49 +908,280 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           
           {/* STEP 1: Farmer Identification */}
           {currentStep === 1 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Full Name</label>
-                <input
-                  type="text"
-                  value={formData.farmerName}
-                  onChange={e => setFormData({ ...formData, farmerName: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm focus:border-emerald-500 outline-none"
-                />
+            <div className="space-y-4">
+              {/* Field-by-Field Guided Voice Bar */}
+              <div className="p-3 bg-gradient-to-r from-emerald-950/80 via-teal-950/80 to-slate-900 border border-emerald-500/40 rounded-2xl flex items-center justify-between shadow-md">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 rounded-xl transition-all ${activeVoiceField ? 'bg-emerald-500 text-slate-950 animate-pulse' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                    <Mic className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white flex items-center gap-2">
+                      <span>{language === 'kn' ? 'ಧ್ವನಿ ಮೂಲಕ ಕ್ಷೇತ್ರವಾರು ಭರ್ತಿ' : 'Field-by-Field Voice-to-Text Input'}</span>
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.2 rounded-full font-mono font-bold">1-by-1</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold font-mono transition-all ${activeVoiceField === 'farmerName' ? 'bg-emerald-500 text-slate-950 shadow' : 'bg-slate-800 text-slate-400'}`}>
+                        1. Name
+                      </span>
+                      <span className="text-slate-600 text-[10px]">➔</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold font-mono transition-all ${activeVoiceField === 'mobile' ? 'bg-emerald-500 text-slate-950 shadow' : 'bg-slate-800 text-slate-400'}`}>
+                        2. Mobile
+                      </span>
+                      <span className="text-slate-600 text-[10px]">➔</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold font-mono transition-all ${activeVoiceField === 'district' ? 'bg-emerald-500 text-slate-950 shadow' : 'bg-slate-800 text-slate-400'}`}>
+                        3. District
+                      </span>
+                      <span className="text-slate-600 text-[10px]">➔</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold font-mono transition-all ${activeVoiceField === 'village' ? 'bg-emerald-500 text-slate-950 shadow' : 'bg-slate-800 text-slate-400'}`}>
+                        4. Village
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {activeVoiceField ? (
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-end gap-0.5 h-4 px-1.5 bg-slate-950/60 rounded-lg py-0.5">
+                      {[0.4, 0.85, 1.0, 0.7, 0.45].map((scale, i) => (
+                        <span
+                          key={i}
+                          className="w-1 bg-emerald-400 rounded-full transition-all duration-75"
+                          style={{ height: `${Math.max(4, Math.round((Math.max(micAudioLevel, 25) / 100) * 16 * scale))}px` }}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (activeVoiceField === 'farmerName') startFieldVoiceInput('mobile', true);
+                        else if (activeVoiceField === 'mobile') startFieldVoiceInput('district', true);
+                        else if (activeVoiceField === 'district') startFieldVoiceInput('village', false);
+                        else stopFieldVoiceInput();
+                      }}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1"
+                    >
+                      <span>Next</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopFieldVoiceInput}
+                      className="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
+                    >
+                      Stop
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startFieldVoiceInput('farmerName', true)}
+                    className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{language === 'kn' ? 'ಧ್ವನಿ ಆರಂಭಿಸಿ' : 'Start Voice Input (1-by-1)'}</span>
+                  </button>
+                )}
               </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Mobile Number</label>
-                <input
-                  type="tel"
-                  value={formData.mobile}
-                  onChange={e => setFormData({ ...formData, mobile: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm focus:border-emerald-500 outline-none"
-                />
+
+              {/* Quick Spoken Test Chips for Step 1 */}
+              <div className="p-2 bg-slate-950/60 border border-slate-800 rounded-xl mb-3 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-slate-400 font-medium">Quick Spoken Samples:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFormData(prev => ({
+                      ...prev,
+                      farmerName: 'Ravi Kumar',
+                      mobile: '9876543210',
+                      district: 'Bengaluru Rural',
+                      village: 'Devanahalli'
+                    }));
+                    playChime('success');
+                    setLastParsedSummary('✓ Typed: Ravi Kumar, 9876543210, Devanahalli');
+                  }}
+                  className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-emerald-400 text-[10px] rounded border border-slate-700 cursor-pointer"
+                >
+                  🗣️ "Ravi Kumar, 9876543210, Devanahalli"
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFormData(prev => ({
+                      ...prev,
+                      farmerName: 'Suresh Gowda',
+                      mobile: '9945012345',
+                      district: 'Ramanagara',
+                      village: 'Ramanagara'
+                    }));
+                    playChime('success');
+                    setLastParsedSummary('✓ Typed: Suresh Gowda, 9945012345, Ramanagara');
+                  }}
+                  className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-emerald-400 text-[10px] rounded border border-slate-700 cursor-pointer"
+                >
+                  🗣️ "Suresh Gowda, Ramanagara"
+                </button>
               </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">State</label>
-                <input
-                  type="text"
-                  value={formData.state}
-                  onChange={e => setFormData({ ...formData, state: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm focus:border-emerald-500 outline-none"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">District & Village</label>
-                <div className="grid grid-cols-2 gap-2">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Field 1: Full Name */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-300">Full Name</label>
+                    <button
+                      type="button"
+                      onClick={() => startFieldVoiceInput('farmerName', false)}
+                      className={`text-[11px] font-bold flex items-center gap-1 px-2 py-0.5 rounded-lg border transition cursor-pointer ${
+                        activeVoiceField === 'farmerName'
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-400 animate-pulse'
+                          : 'bg-slate-800 text-emerald-400 border-slate-700 hover:bg-slate-750'
+                      }`}
+                      title="Speak Name"
+                    >
+                      <Mic className="w-3 h-3" />
+                      <span>{activeVoiceField === 'farmerName' ? 'Listening...' : 'Speak Name'}</span>
+                    </button>
+                  </div>
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      value={formData.farmerName}
+                      onChange={e => setFormData({ ...formData, farmerName: e.target.value })}
+                      placeholder="e.g. Ravi Kumar"
+                      className={`w-full bg-slate-950 border rounded-xl px-3.5 py-2.5 text-white text-sm outline-none pr-10 transition-all ${
+                        activeVoiceField === 'farmerName'
+                          ? 'border-emerald-400 ring-2 ring-emerald-500/40 bg-emerald-950/20'
+                          : 'border-slate-700 focus:border-emerald-500'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => startFieldVoiceInput('farmerName', false)}
+                      className={`absolute right-2.5 p-1.5 rounded-lg transition ${
+                        activeVoiceField === 'farmerName' ? 'text-emerald-300 bg-emerald-500/20 animate-pulse' : 'text-slate-400 hover:text-emerald-400'
+                      }`}
+                    >
+                      <Mic className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {activeVoiceField === 'farmerName' && (
+                    <p className="text-[11px] text-emerald-300 font-mono mt-1.5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span>{isFieldListening ? (fieldInterimText ? `Typing: "${fieldInterimText}"` : 'Listening... Speak your full name now') : 'Speaking prompt...'}</span>
+                    </p>
+                  )}
+                </div>
+
+                {/* Field 2: Mobile Number */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-300">Mobile Number</label>
+                    <button
+                      type="button"
+                      onClick={() => startFieldVoiceInput('mobile', false)}
+                      className={`text-[11px] font-bold flex items-center gap-1 px-2 py-0.5 rounded-lg border transition cursor-pointer ${
+                        activeVoiceField === 'mobile'
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-400 animate-pulse'
+                          : 'bg-slate-800 text-emerald-400 border-slate-700 hover:bg-slate-750'
+                      }`}
+                      title="Speak Mobile"
+                    >
+                      <Mic className="w-3 h-3" />
+                      <span>{activeVoiceField === 'mobile' ? 'Listening...' : 'Speak Mobile'}</span>
+                    </button>
+                  </div>
+                  <div className="relative flex items-center">
+                    <input
+                      type="tel"
+                      maxLength={10}
+                      value={formData.mobile}
+                      onChange={e => setFormData({ ...formData, mobile: e.target.value.replace(/\D/g, '') })}
+                      placeholder="9876543210"
+                      className={`w-full bg-slate-950 border rounded-xl px-3.5 py-2.5 text-white text-sm font-mono outline-none pr-10 transition-all ${
+                        activeVoiceField === 'mobile'
+                          ? 'border-emerald-400 ring-2 ring-emerald-500/40 bg-emerald-950/20'
+                          : 'border-slate-700 focus:border-emerald-500'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => startFieldVoiceInput('mobile', false)}
+                      className={`absolute right-2.5 p-1.5 rounded-lg transition ${
+                        activeVoiceField === 'mobile' ? 'text-emerald-300 bg-emerald-500/20 animate-pulse' : 'text-slate-400 hover:text-emerald-400'
+                      }`}
+                    >
+                      <Mic className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {activeVoiceField === 'mobile' && (
+                    <p className="text-[11px] text-emerald-300 font-mono mt-1.5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span>{isFieldListening ? (fieldInterimText ? `Typing: "${fieldInterimText}"` : 'Listening... Speak 10-digit number') : 'Speaking prompt...'}</span>
+                    </p>
+                  )}
+                </div>
+
+                {/* Field: State */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">State</label>
                   <input
                     type="text"
-                    value={formData.district}
-                    onChange={e => setFormData({ ...formData, district: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm"
+                    value={formData.state}
+                    onChange={e => setFormData({ ...formData, state: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm focus:border-emerald-500 outline-none"
                   />
-                  <input
-                    type="text"
-                    value={formData.village}
-                    onChange={e => setFormData({ ...formData, village: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm"
-                  />
+                </div>
+
+                {/* Fields: District & Village */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">District & Village</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="relative flex items-center">
+                      <input
+                        type="text"
+                        value={formData.district}
+                        onChange={e => setFormData({ ...formData, district: e.target.value })}
+                        placeholder="District"
+                        className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-white text-sm outline-none pr-7 ${
+                          activeVoiceField === 'district' ? 'border-emerald-400 ring-2 ring-emerald-500/40 bg-emerald-950/20' : 'border-slate-700'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => startFieldVoiceInput('district', false)}
+                        title="Speak District"
+                        className="absolute right-1.5 text-slate-400 hover:text-emerald-400 cursor-pointer"
+                      >
+                        <Mic className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="relative flex items-center">
+                      <input
+                        type="text"
+                        value={formData.village}
+                        onChange={e => setFormData({ ...formData, village: e.target.value })}
+                        placeholder="Village"
+                        className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-white text-sm outline-none pr-7 ${
+                          activeVoiceField === 'village' ? 'border-emerald-400 ring-2 ring-emerald-500/40 bg-emerald-950/20' : 'border-slate-700'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => startFieldVoiceInput('village', false)}
+                        title="Speak Village"
+                        className="absolute right-1.5 text-slate-400 hover:text-emerald-400 cursor-pointer"
+                      >
+                        <Mic className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  {(activeVoiceField === 'district' || activeVoiceField === 'village') && (
+                    <p className="text-[11px] text-emerald-300 font-mono mt-1.5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span>{isFieldListening ? (fieldInterimText ? `Typing: "${fieldInterimText}"` : `Listening for ${activeVoiceField}...`) : 'Speaking prompt...'}</span>
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

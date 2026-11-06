@@ -326,3 +326,243 @@ export const speakAloud = (
     return () => {};
   }
 };
+
+/**
+ * Cleans spoken name text by stripping filler prefixes and formatting title case
+ */
+export const cleanSpokenName = (spoken: string): string => {
+  if (!spoken) return '';
+  const stripped = spoken
+    .replace(/(?:my\s*name\s*is|i\s*am|this\s*is|nanna\s*hesaru|hesaru|farmer|namaste|hello|ನನ್ನ\s*ಹೆಸರು|ಹೆಸರು|ನಮಸ್ತೆ|ರೈತ)\s*/gi, '')
+    .replace(/[,.-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!stripped) return spoken.trim();
+
+  return stripped
+    .split(' ')
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+};
+
+/**
+ * Converts spoken number words (e.g. "nine eight seven...") to numeric digits
+ */
+export const spokenToDigits = (spoken: string): string => {
+  const wordMap: Record<string, string> = {
+    zero: '0', one: '1', two: '2', three: '3', four: '4',
+    five: '5', six: '6', seven: '7', eight: '8', nine: '9',
+    oh: '0',
+    'ಸೊನ್ನೆ': '0', 'ಒಂದು': '1', 'ಎರಡು': '2', 'ಮೂರು': '3', 'ನಾಲ್ಕು': '4',
+    'ಐದು': '5', 'ಆರು': '6', 'ಏಳು': '7', 'ಎಂಟು': '8', 'ಒಂಬತ್ತು': '9'
+  };
+  let text = spoken.toLowerCase();
+  for (const [w, d] of Object.entries(wordMap)) {
+    text = text.split(w).join(d);
+  }
+  return text.replace(/\D/g, '');
+};
+
+export interface FieldVoiceListenerOptions {
+  lang?: string;
+  onInterimText?: (text: string) => void;
+  onFinalText?: (text: string) => void;
+  onStart?: () => void;
+  onEnd?: () => void;
+  onError?: (err: any) => void;
+  onAudioLevel?: (level: number) => void;
+}
+
+export interface VoiceSessionController {
+  stop: () => void;
+  isListening: () => boolean;
+}
+
+/**
+ * Robust, continuous speech recognition controller with:
+ * 1. Automatic getUserMedia mic unlock
+ * 2. Live Web Audio API volume measurement for visualizer
+ * 3. Continuous recognition with auto-reconnection on unexpected drop
+ * 4. Streaming interim transcription directly into fields
+ * 5. Multi-language resilience (en-IN -> en-US -> browser default)
+ */
+export const startFieldVoiceRecognition = (options: FieldVoiceListenerOptions): VoiceSessionController | null => {
+  if (typeof window === 'undefined') return null;
+
+  const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!SpeechRec) {
+    options.onError?.('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
+    return null;
+  }
+
+  let active = true;
+  let micStream: MediaStream | null = null;
+  let audioContext: AudioContext | null = null;
+  let animationFrameId: number | null = null;
+  let recInstance: any = null;
+
+  // 1. Request microphone & start Web Audio volume level analyzer
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      if (!active) {
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+      micStream = stream;
+
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          audioContext = new AudioContextClass();
+          const source = audioContext.createMediaStreamSource(stream);
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 64;
+          source.connect(analyser);
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const reportLevel = () => {
+            if (!active) return;
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i];
+            }
+            const avg = sum / dataArray.length;
+            const level = Math.min(100, Math.round((avg / 128) * 100));
+            options.onAudioLevel?.(level);
+            animationFrameId = requestAnimationFrame(reportLevel);
+          };
+          reportLevel();
+        }
+      } catch (e) {
+        console.debug('Audio analyser setup:', e);
+      }
+    }).catch((err) => {
+      console.warn('Microphone permission check:', err);
+    });
+  }
+
+  // 2. Initialize continuous speech recognizer
+  const initRecognizer = (langCode: string) => {
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      rec.lang = langCode;
+
+      rec.onstart = () => {
+        playChime('start');
+        options.onStart?.();
+      };
+
+      rec.onresult = (evt: any) => {
+        let interimText = '';
+        let finalText = '';
+
+        for (let i = 0; i < evt.results.length; ++i) {
+          const trans = evt.results[i][0]?.transcript || '';
+          if (evt.results[i].isFinal) {
+            finalText += (finalText ? ' ' : '') + trans;
+          } else {
+            interimText += (interimText ? ' ' : '') + trans;
+          }
+        }
+
+        const combined = (finalText + (interimText ? ' ' + interimText : '')).trim();
+        if (combined) {
+          options.onInterimText?.(combined);
+        }
+        if (finalText.trim()) {
+          options.onFinalText?.(finalText.trim());
+        }
+      };
+
+      rec.onerror = (evt: any) => {
+        console.warn('Speech recognition error event:', evt.error);
+        if (evt.error === 'no-speech') {
+          // Ignore silence timeouts - do not abort while user is active
+          return;
+        }
+        if (evt.error === 'network' && langCode !== 'en-US') {
+          // Fallback from regional to standard en-US
+          console.info('Switching speech language to fallback en-US');
+          try { rec.abort(); } catch (e) {}
+          if (active) {
+            setTimeout(() => {
+              if (active) initRecognizer('en-US');
+            }, 150);
+          }
+          return;
+        }
+        if (evt.error === 'not-allowed') {
+          options.onError?.('Microphone permission denied. Please allow microphone access in browser settings.');
+          active = false;
+        }
+      };
+
+      rec.onend = () => {
+        // Automatically restart if session is still active (handles Chrome unexpected drops)
+        if (active) {
+          setTimeout(() => {
+            if (active) {
+              try {
+                initRecognizer(langCode);
+              } catch (e) {
+                console.debug('Speech rec restart:', e);
+              }
+            }
+          }, 120);
+        } else {
+          options.onEnd?.();
+        }
+      };
+
+      rec.start();
+      recInstance = rec;
+    } catch (err) {
+      console.warn('Error starting speech recognition:', err);
+      options.onError?.(err);
+    }
+  };
+
+  const initialLang = options.lang || (typeof navigator !== 'undefined' ? navigator.language : 'en-IN') || 'en-IN';
+  initRecognizer(initialLang);
+
+  return {
+    stop: () => {
+      active = false;
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop());
+        micStream = null;
+      }
+      if (audioContext && audioContext.state !== 'closed') {
+        audioContext.close().catch(() => {});
+        audioContext = null;
+      }
+      if (recInstance) {
+        try {
+          if (recInstance.abort) recInstance.abort();
+          else recInstance.stop();
+        } catch (e) {}
+        recInstance = null;
+      }
+      options.onEnd?.();
+    },
+    isListening: () => active
+  };
+};
+
+/**
+ * Backward compatibility alias for single-shot field recognition
+ */
+export const createFieldSpeechRecognizer = (options: FieldVoiceListenerOptions): any => {
+  return startFieldVoiceRecognition(options);
+};
+

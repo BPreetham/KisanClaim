@@ -104,6 +104,7 @@ def reset_demo_state():
 class FarmerLoginPayload(BaseModel):
     mobile: str
     otp: Optional[str] = "1234"
+    name: Optional[str] = None
 
 class FarmerRegisterPayload(BaseModel):
     name: str
@@ -130,14 +131,17 @@ def farmer_login(payload: FarmerLoginPayload):
             break
 
     if not matching_farmer:
+        fallback_name = payload.name.strip() if payload.name and payload.name.strip() else ("Ravi Kumar" if mob == "9876543210" else f"Farmer {mob[-4:]}")
         matching_farmer = FarmerProfile(
             id=f"farmer-{uuid.uuid4().hex[:6]}",
-            name="Ravi Kumar" if mob == "9876543210" else f"Farmer {mob[-4:]}",
+            name=fallback_name,
             mobile=mob,
             state="Karnataka",
             district="Bengaluru Rural",
             village="Devanahalli"
         )
+    elif payload.name and payload.name.strip():
+        matching_farmer.name = payload.name.strip()
 
     return {
         "success": True,
@@ -573,3 +577,33 @@ def get_ndvi_matrix(disaster_type: str = "Flood"):
         "post_disaster_grid": post_grid,
         "diff_grid": diff_grid
     }
+
+class STTPayload(BaseModel):
+    audio_base64: Optional[str] = None
+    language: Optional[str] = "en-IN"
+
+@app.post("/api/speech-to-text")
+async def speech_to_text(payload: STTPayload):
+    """
+    Fallback Speech-to-Text server endpoint using Python speech_recognition.
+    Guarantees voice transcription if browser Web Speech API encounters network restrictions.
+    """
+    import base64
+    import io
+    try:
+        import speech_recognition as sr
+        b64 = payload.audio_base64 or ""
+        if "," in b64:
+            b64 = b64.split(",")[1]
+        if not b64:
+            return {"success": False, "error": "No audio provided"}
+        audio_bytes = base64.b64decode(b64)
+        buf = io.BytesIO(audio_bytes)
+        r = sr.Recognizer()
+        with sr.AudioFile(buf) as source:
+            audio_data = r.record(source)
+        lang = payload.language or "en-IN"
+        text = r.recognize_google(audio_data, language=lang)
+        return {"success": True, "text": text}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

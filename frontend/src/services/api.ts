@@ -2,11 +2,11 @@ import { Claim, NotificationItem, StatsKPI, UserSession } from '../types';
 
 const API_BASE = '/api';
 
-export async function loginFarmer(mobile: string, otp: string = '1234'): Promise<UserSession> {
+export async function loginFarmer(mobile: string, otp: string = '1234', name?: string): Promise<UserSession> {
   const res = await fetch(`${API_BASE}/auth/farmer/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mobile, otp })
+    body: JSON.stringify({ mobile, otp, name })
   });
   if (!res.ok) throw new Error('Farmer login failed');
   return res.json();
